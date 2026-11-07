@@ -1,0 +1,36 @@
+{
+  "name": "tack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TACK — adaptive AI sailing tactician (prototype, not for navigation)",
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,yellow \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch --env-file-if-exists=.env server/index.ts",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "tsx --env-file-if-exists=.env server/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test server/tack.test.ts"
+  },
+  "dependencies": {
+    "express": "^4.22.3",
+    "leaflet": "1.9",
+    "mongodb": "^6.22.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^26.6.6",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^10.0.7",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21"
+  }
+}
