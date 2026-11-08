@@ -1,9 +1,36 @@
-# TACK — adaptive AI sailing tactician
+# TACK TACK
+
+*Every voyage makes the next one smarter.*
 
 **Prototype. Not certified navigation software. The captain always decides.**
 
-TACK combines a vessel polar, live Open-Meteo weather and marine forecasts, the logbook and the captain's
-instructions to generate candidate routes. SubQ Snap chooses between them. TACK also improves its own routing
+TACK TACK is a calm, conversational companion for offshore sailing. Open it and it greets you, tells you where
+the boat is, how she's doing and whether anything needs attention — then you talk to it. Ask about the voyage,
+say "prioritise comfort tonight", "let's update the route" or "let's do a watch change", and it takes care of
+the machinery underneath.
+
+## Using it
+
+* **Voyage (home).** Greeting, an at-a-glance summary (where, the boat, conditions, arrival, priorities),
+  important notices, three actions — *Update route*, *Watch change*, *View logbook* — and the conversation.
+  Natural-language priorities are translated into routing objectives; TACK TACK then offers to update the route.
+* **Update route.** Latest position → fresh forecast → candidate routes → SubQ Snap. The captain sees at most
+  three options — *Recommended*, *Fastest*, *Most comfortable* — with arrival time and trade-offs. "Why this
+  route?" shows the reasoning; "All candidates and scores" opens the full routing details.
+* **Watch change.** Describe the boat in your own words, enter instrument readings (all fields optional), or
+  photograph the chartplotter. Text and images are read by the language model (images by an image-capable
+  model, `META_VISION_MODEL`) and **shown for confirmation before anything is stored**; values that weren't
+  stated or legible stay empty. All three feed the same structured logbook entry.
+* **Logbook.** A journal timeline grouped by day: time (UTC), position, who wrote each entry, what was observed,
+  what was decided and what happened next. Captain notes, instrument readings, forecasts, interpretations,
+  recommendations and outcomes are colour-coded and filterable. Historical logs can be imported and replayed
+  on the chart; *Boat performance* and *Fleet memory* live here too.
+* **Settings** (top right) holds the advanced priorities (weights and hard limits), all latest readings,
+  connection status and "simulate losing connectivity".
+* **Lab** shows the self-improving routing strategy (below).
+
+TACK TACK combines a vessel polar, live Open-Meteo weather and marine forecasts, the logbook and the captain's
+instructions to generate candidate routes. SubQ Snap chooses between them. TACK TACK also improves its own routing
 strategy code: it finds recurring prediction errors, proposes a code change, versions it, tests it on held-out
 data, and promotes or rejects it.
 
@@ -18,6 +45,7 @@ npm test
 
 | Variable | Purpose |
 |---|---|
+| `META_VISION_MODEL` | optional image-capable model for chartplotter photos (defaults to `META_MODEL`) |
 | `META_API_KEY` | Meta Model API (`https://api.meta.ai/v1`, OpenAI-compatible chat completions; default model `muse-spark-1.3`) |
 | `SUBQ_API_KEY` | SubQ Decisions API (`POST https://api.subq.ai/v1/systemone`, model `subq-snap-1.1`) |
 | `MODEL_PROVIDER=local`, `LOCAL_MODEL_URL`, `LOCAL_MODEL` | on-board Llama via any OpenAI-compatible server (llama.cpp, Ollama, vLLM) |
@@ -30,7 +58,7 @@ lets a locally hosted Llama replace the hosted API.
 ## Architecture
 
 ```
-client/  React + Leaflet chart UI (Chart view, Strategy Lab)
+client/  React + Leaflet UI (Voyage: conversation + chart, Logbook journal, Lab)
 server/
   model/        ModelProvider: Meta Model API | local OpenAI-compatible Llama (+ offline fallbacks)
   weather/      WeatherProvider: Open-Meteo forecast + marine, gridded, cached on disk with retrieval time
@@ -46,10 +74,10 @@ server/
 data/  vessel.json, polars/, geo/ (Natural Earth 1:50m coastline), strategies/, store/ (local DB), cache/
 ```
 
-All state lives on board (`data/store`, `data/cache`). When offline, TACK still logs (rule-based parser),
+All state lives on board (`data/store`, `data/cache`). When offline, TACK TACK still logs (rule-based parser),
 answers logbook queries (keyword search), routes on the cached forecast (marked stale), and ranks routes with a
 labelled local score. A sync queue re-reads offline entries with the model and re-asks SubQ when the link
-returns. "Simulate offline" is in the top bar.
+returns. "Simulate losing connectivity" is in Settings.
 
 ## Self-improvement ("The System That Gets Better")
 

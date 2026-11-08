@@ -120,12 +120,12 @@ export function buildDecisionRequest(inp: DecisionInputs) {
   if (inp.weather.stale) dataGaps.push(`Weather forecast is stale (retrieved ${inp.weather.ageMinutes} min ago)`);
   if (!inp.weather.meta?.marineAvailable) dataGaps.push("Marine forecast (waves/currents) unavailable");
   if (inp.polar.isSample) dataGaps.push("Vessel polar is a generic sample, not this boat's measured polar");
-  if (inp.objectives.weights.scenic > 0.5) dataGaps.push("TACK has no scenic/anchorage database; scenic value of routes is unknown");
+  if (inp.objectives.weights.scenic > 0.5) dataGaps.push("TACK TACK has no scenic/anchorage database; scenic value of routes is unknown");
   if (eligible.some((r) => r.metrics.hoursBeyondForecast > 0)) dataGaps.push("Some routes extend beyond the forecast horizon");
 
   const state = {
     role: "You are evaluating candidate sailing routes on behalf of a yacht captain. The captain retains final authority.",
-    task: "Select the candidate route that best satisfies the captain's CURRENT objectives. All numbers are estimates from TACK's routing engine (vessel polar + Open-Meteo forecast). Hard constraints are already enforced: only eligible routes are offered. Do not recalculate physics or assume weather beyond what is given.",
+    task: "Select the candidate route that best satisfies the captain's CURRENT objectives. All numbers are estimates from TACK TACK's routing engine (vessel polar + Open-Meteo forecast). Hard constraints are already enforced: only eligible routes are offered. Do not recalculate physics or assume weather beyond what is given.",
     nowUtc: new Date().toISOString(),
     captainObjectives: {
       hardConstraints: inp.objectives.hard,
@@ -323,7 +323,7 @@ export async function decide(inp: DecisionInputs, provider: DecisionProvider = s
       confidence: null,
       probabilities: probs,
       lowConfidence: true,
-      askCaptain: "SubQ could not be reached, so this ranking comes from TACK's simple on-board weighted score. Treat it as provisional; TACK will re-submit to SubQ when connectivity returns.",
+      askCaptain: "SubQ could not be reached, so this ranking comes from TACK TACK's simple on-board weighted score. Treat it as provisional; TACK TACK will re-submit to SubQ when connectivity returns.",
       tradeoffs: tradeoffs(sel, inp.routing.routes),
       error: (e as Error).message,
     };

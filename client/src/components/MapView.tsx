@@ -1,7 +1,7 @@
 import L from "leaflet";
 import { useEffect, useMemo, useState } from "react";
 import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Rectangle, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
-import { api, compass, fmtTime, ROUTE_COLORS, type CandidateRoute, type GridPoint, type LogEntry, type RoutingResult } from "../api";
+import { ACCENT, api, compass, fmtTime, ROUTE_COLORS, type CandidateRoute, type GridPoint, type LogEntry, type RoutingResult } from "../api";
 
 interface Props {
   routing: RoutingResult | null;
@@ -17,9 +17,12 @@ interface Props {
   weatherInfo: string;
   replay: { entries: LogEntry[]; index: number } | null;
   onPick: (kind: "start" | "destination", p: { lat: number; lon: number }) => void;
+  poolLegs?: { id: string; from: { lat: number; lon: number }; to: { lat: number; lon: number }; t: string; twsKn: number; waveHeightM: number | null; observedSogKn: number }[];
+  poolHighlight?: string[];
 }
 
-const windColor = (kn: number) => (kn >= 25 ? "#e0703a" : kn >= 18 ? "#e9a06a" : kn >= 12 ? "#efe6d2" : "#9fb6c2");
+// Quiet ink strokes for ordinary wind; only strong wind earns colour.
+const windColor = (kn: number) => (kn >= 25 ? ACCENT : kn >= 18 ? "#4a555c" : kn >= 12 ? "#76828a" : "#a3adb3");
 
 function windIcon(p: GridPoint) {
   const kn = p.twsKn ?? 0;
@@ -31,9 +34,9 @@ function windIcon(p: GridPoint) {
     iconSize: [44, 44],
     iconAnchor: [22, 22],
     html: `<svg width="44" height="44" viewBox="-22 -22 44 44" style="transform:rotate(${rot}deg);overflow:visible">
-      <line x1="0" y1="${len / 2}" x2="0" y2="${-len / 2}" stroke="${c}" stroke-width="1.6" stroke-linecap="round"/>
-      <path d="M0 ${-len / 2 - 4} L-3.5 ${-len / 2 + 2} L3.5 ${-len / 2 + 2} Z" fill="${c}"/>
-    </svg><div style="position:absolute;left:28px;top:14px;font:500 9px IBM Plex Mono,monospace;color:${c};opacity:.85">${Math.round(kn)}</div>`,
+      <line x1="0" y1="${len / 2}" x2="0" y2="${-len / 2}" stroke="${c}" stroke-width="1.2" stroke-linecap="round"/>
+      <path d="M0 ${-len / 2 - 3.5} L-2.8 ${-len / 2 + 1.5} L2.8 ${-len / 2 + 1.5} Z" fill="${c}"/>
+    </svg><div style="position:absolute;left:28px;top:14px;font:500 9px Geist Mono,ui-monospace,monospace;color:${c};opacity:.8">${Math.round(kn)}</div>`,
   });
 }
 
@@ -44,18 +47,18 @@ function currentIcon(p: GridPoint) {
     className: "",
     iconSize: [30, 30],
     iconAnchor: [15, 15],
-    html: `<svg width="30" height="30" viewBox="-15 -15 30 30" style="transform:rotate(${p.currentDirDeg ?? 0}deg)"><line x1="0" y1="${len / 2}" x2="0" y2="${-len / 2}" stroke="#7fd1c0" stroke-width="1.4" stroke-dasharray="2 2"/><path d="M0 ${-len / 2 - 3} L-2.5 ${-len / 2 + 1} L2.5 ${-len / 2 + 1} Z" fill="#7fd1c0"/></svg>`,
+    html: `<svg width="30" height="30" viewBox="-15 -15 30 30" style="transform:rotate(${p.currentDirDeg ?? 0}deg)"><line x1="0" y1="${len / 2}" x2="0" y2="${-len / 2}" stroke="#4f8a93" stroke-width="1.2" stroke-dasharray="2 2"/><path d="M0 ${-len / 2 - 3} L-2.5 ${-len / 2 + 1} L2.5 ${-len / 2 + 1} Z" fill="#4f8a93"/></svg>`,
   });
 }
 
-const boatIcon = (heading: number | null, color = "#d9733a") =>
+const boatIcon = (heading: number | null, color = "#1d2327") =>
   L.divIcon({
     className: "",
     iconSize: [30, 30],
     iconAnchor: [15, 15],
-    html: `<svg width="30" height="30" viewBox="-15 -15 30 30" style="transform:rotate(${heading ?? 0}deg);filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))">
-      <path d="M0 -12 C5 -5 5 5 3.5 10 L-3.5 10 C-5 5 -5 -5 0 -12 Z" fill="${color}" stroke="#efe6d2" stroke-width="1.4"/>
-      ${heading == null ? "" : '<line x1="0" y1="-12" x2="0" y2="-26" stroke="#efe6d2" stroke-width="1" stroke-dasharray="2 2"/>'}
+    html: `<svg width="30" height="30" viewBox="-15 -15 30 30" style="transform:rotate(${heading ?? 0}deg);filter:drop-shadow(0 1px 2px rgba(29,35,39,.35))">
+      <path d="M0 -12 C5 -5 5 5 3.5 10 L-3.5 10 C-5 5 -5 -5 0 -12 Z" fill="${color}" stroke="#fff" stroke-width="1.6"/>
+      ${heading == null ? "" : '<line x1="0" y1="-12" x2="0" y2="-26" stroke="#1d2327" stroke-width="1" stroke-dasharray="2 2" opacity=".6"/>'}
     </svg>`,
   });
 
@@ -63,7 +66,7 @@ const destIcon = L.divIcon({
   className: "",
   iconSize: [26, 26],
   iconAnchor: [13, 13],
-  html: `<svg width="26" height="26" viewBox="-13 -13 26 26"><circle r="9" fill="none" stroke="#efe6d2" stroke-width="1.5"/><circle r="3" fill="#d9733a"/><path d="M0 -13 V-6 M0 6 V13 M-13 0 H-6 M6 0 H13" stroke="#efe6d2" stroke-width="1.2"/></svg>`,
+  html: `<svg width="26" height="26" viewBox="-13 -13 26 26"><circle r="8" fill="#fff" fill-opacity=".7" stroke="#1d2327" stroke-width="1.3"/><circle r="2.6" fill="${ACCENT}"/></svg>`,
 });
 
 function Graticule() {
@@ -76,7 +79,7 @@ function Graticule() {
   return (
     <>
       {lines.map((l, i) => (
-        <Polyline key={i} positions={l.pts} pathOptions={{ color: "#efe6d2", weight: 0.6, opacity: 0.13, interactive: false }} />
+        <Polyline key={i} positions={l.pts} pathOptions={{ color: "#1d2327", weight: 0.5, opacity: 0.08, interactive: false }} />
       ))}
     </>
   );
@@ -161,21 +164,21 @@ export function MapView(p: Props) {
     <div className="map-wrap">
       <MapContainer center={[p.vessel.lat, p.vessel.lon]} zoom={5} worldCopyJump zoomSnap={0.25} preferCanvas={false} attributionControl>
         {layers.basemap && (
-          <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}" attribution="Esri, GEBCO, NOAA" opacity={0.55} />
+          <TileLayer className="relief-tiles" url="https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}" attribution="Esri, GEBCO, NOAA" opacity={0.7} />
         )}
         <Graticule />
         <GraticuleLabels />
         {land && !layers.basemap && (
-          <GeoJSON data={land} interactive={false} style={{ color: "#b9a77f", weight: 0.8, fillColor: "#e9dfc7", fillOpacity: 1 }} attribution="Coastline: Natural Earth 1:50m" />
+          <GeoJSON data={land} interactive={false} style={{ color: "#bdb5a5", weight: 0.7, fillColor: "#f2efe7", fillOpacity: 1 }} attribution="Coastline: Natural Earth 1:50m" />
         )}
         {layers.waves && p.grid.map((g) => g.waveHeightM != null && (
           <Rectangle key={`w${g.lat},${g.lon}`} bounds={[[g.lat - step / 2, g.lon - step / 2], [g.lat + step / 2, g.lon + step / 2]]} interactive={false}
-            pathOptions={{ stroke: false, fillColor: g.waveHeightM > 3.5 ? "#f2c9a8" : "#9fd0df", fillOpacity: Math.min(0.42, 0.04 + g.waveHeightM * 0.085) }} />
+            pathOptions={{ stroke: false, fillColor: g.waveHeightM > 3.5 ? "#c98f78" : "#7d9fb0", fillOpacity: Math.min(0.26, 0.02 + g.waveHeightM * 0.055) }} />
         ))}
         {layers.waves && p.grid.map((g) => g.waveHeightM != null && (
           <CircleMarker key={`wt${g.lat},${g.lon}`} center={[g.lat, g.lon]} radius={9} pathOptions={{ opacity: 0, fillOpacity: 0 }}>
             <Tooltip className="tack-tip" direction="top">
-              FORECAST {fmtTime(g.time)}<br />wind {g.twsKn ?? "—"} kn from {g.twdDeg ?? "—"}° {compass(g.twdDeg)} · gust {g.gustKn ?? "—"}<br />
+              Forecast {fmtTime(g.time)}<br />wind {g.twsKn ?? "—"} kn from {g.twdDeg ?? "—"}° {compass(g.twdDeg)} · gust {g.gustKn ?? "—"}<br />
               waves {g.waveHeightM} m / {g.wavePeriodS ?? "—"} s from {g.waveDirDeg ?? "—"}° · swell {g.swellHeightM ?? "—"} m<br />
               current {g.currentKn ?? "—"} kn → {g.currentDirDeg ?? "—"}°
             </Tooltip>
@@ -189,16 +192,16 @@ export function MapView(p: Props) {
         {!p.replay && ordered.map((r) => {
           const sel = r.id === p.selectedId;
           const foc = r.id === p.focusId;
-          const color = sel ? "#d9733a" : ROUTE_COLORS[r.id] ?? "#efe6d2";
+          const color = sel ? ACCENT : foc ? "#1d2327" : ROUTE_COLORS[r.id] ?? "#8d9498";
           return (
             <Polyline key={r.id} positions={r.track.map((t) => [t.lat, t.lon] as [number, number])}
               eventHandlers={{ click: () => p.onFocus(r.id), mouseover: () => p.onFocus(r.id) }}
-              pathOptions={{ color, weight: sel ? 4 : foc ? 3 : 1.8, opacity: sel || foc ? 1 : r.eligible ? 0.7 : 0.35, dashArray: r.eligible ? (sel ? undefined : "6 5") : "2 6" }}>
+              pathOptions={{ color, weight: sel ? 3.2 : foc ? 2.4 : 1.4, opacity: sel || foc ? 1 : r.eligible ? 0.6 : 0.3, dashArray: r.eligible ? undefined : "1 5", lineCap: "round" }}>
               <Tooltip sticky className="tack-tip">
                 <b>{r.id} {r.name}</b>{sel ? " — recommended" : ""}<br />
                 ETA {fmtTime(r.metrics.etaIso)} · {r.metrics.distanceNm} nm · comfort {r.metrics.comfortIndex}/10<br />
                 motoring {r.metrics.motoringHours} h · max wind {r.metrics.wind.maxKn} kn · max waves {r.metrics.waves.maxM ?? "—"} m
-                {!r.eligible && <><br /><span style={{ color: "#b5482b" }}>✕ {r.hardConstraintViolations.join("; ")}</span></>}
+                {!r.eligible && <><br /><span style={{ color: "var(--warn)" }}>Excluded: {r.hardConstraintViolations.join("; ")}</span></>}
               </Tooltip>
             </Polyline>
           );
@@ -207,19 +210,33 @@ export function MapView(p: Props) {
           const pos = positionAt(r, tMs);
           if (!pos) return null;
           const sel = r.id === p.selectedId;
-          return <CircleMarker key={`p${r.id}`} center={pos} radius={sel ? 5 : 3.5} pathOptions={{ color: "#08202f", weight: 1, fillColor: sel ? "#d9733a" : ROUTE_COLORS[r.id], fillOpacity: 1 }} />;
+          return <CircleMarker key={`p${r.id}`} center={pos} radius={sel ? 5 : 3.5} pathOptions={{ color: "#fff", weight: 1.5, fillColor: sel ? ACCENT : ROUTE_COLORS[r.id], fillOpacity: 1 }} />;
         })}
 
         {p.replay && (
           <>
             <FitReplay track={replayTrack} />
-            <Polyline positions={replayTrack} pathOptions={{ color: "#b7a3d9", weight: 1.5, opacity: 0.45, dashArray: "3 4" }} />
-            <Polyline positions={replayPos} pathOptions={{ color: "#c9b5ec", weight: 3, opacity: 0.95 }} />
+            <Polyline positions={replayTrack} pathOptions={{ color: "#6b5b95", weight: 1.2, opacity: 0.35, dashArray: "2 4" }} />
+            <Polyline positions={replayPos} pathOptions={{ color: "#6b5b95", weight: 2.4, opacity: 0.9 }} />
             {replayEntry?.observations?.position && (
-              <Marker position={[replayEntry.observations.position.lat, replayEntry.observations.position.lon]} icon={boatIcon(replayEntry.observations.cogDeg ?? replayEntry.observations.headingDeg, "#9b7fd0")} />
+              <Marker position={[replayEntry.observations.position.lat, replayEntry.observations.position.lon]} icon={boatIcon(replayEntry.observations.cogDeg ?? replayEntry.observations.headingDeg, "#6b5b95")} />
             )}
           </>
         )}
+
+        {(p.poolLegs ?? []).map((l) => {
+          const hit = (p.poolHighlight ?? []).some((w) => w.slice(0, 13) === l.t.slice(0, 13));
+          return (
+            <Polyline key={l.id} positions={[[l.from.lat, l.from.lon], [l.to.lat, l.to.lon]]}
+              pathOptions={{ color: hit ? ACCENT : "#8a7fb0", weight: hit ? 4 : 2, opacity: hit ? 1 : 0.6 }}>
+              <Tooltip sticky className="tack-tip">
+                Fleet memory (shared, anonymised){hit ? " — match" : ""}<br />{fmtTime(l.t)} · {l.observedSogKn.toFixed(1)} kn made good<br />
+                archived forecast: {l.twsKn} kn, waves {l.waveHeightM ?? "—"} m<br />positions rounded to 0.5°
+              </Tooltip>
+            </Polyline>
+          );
+        })}
+        {(p.poolLegs?.length ?? 0) > 0 && <FitReplay track={(p.poolLegs ?? []).flatMap((l) => [[l.from.lat, l.from.lon], [l.to.lat, l.to.lon]] as [number, number][])} />}
 
         {!p.replay && (
           <>
@@ -233,31 +250,31 @@ export function MapView(p: Props) {
 
       <div className="map-overlay map-layers">
         {(["wind", "waves", "currents"] as const).map((k) => (
-          <button key={k} className={layers[k] ? "on" : ""} onClick={() => setLayers({ ...layers, [k]: !layers[k] })}>{k}</button>
+          <button key={k} className={layers[k] ? "on" : ""} onClick={() => setLayers({ ...layers, [k]: !layers[k] })}>{k[0].toUpperCase() + k.slice(1)}</button>
         ))}
-        <button className={layers.basemap ? "on" : ""} title="Esri ocean basemap — needs internet" onClick={() => setLayers({ ...layers, basemap: !layers.basemap })}>relief</button>
-        {!p.replay && <button className={pick === "start" ? "on" : ""} onClick={() => setPick(pick === "start" ? null : "start")}>set start</button>}
-        {!p.replay && <button className={pick === "destination" ? "on" : ""} onClick={() => setPick(pick === "destination" ? null : "destination")}>set dest</button>}
+        <button className={layers.basemap ? "on" : ""} title="Esri ocean basemap — needs internet" onClick={() => setLayers({ ...layers, basemap: !layers.basemap })}>Relief</button>
+        {!p.replay && <button className={pick === "start" ? "on" : ""} onClick={() => setPick(pick === "start" ? null : "start")}>Set start</button>}
+        {!p.replay && <button className={pick === "destination" ? "on" : ""} onClick={() => setPick(pick === "destination" ? null : "destination")}>Set destination</button>}
       </div>
 
       {!p.replay && routes.length > 0 && (
         <div className="map-overlay map-legend">
           {routes.map((r) => (
-            <div className="row" key={r.id} style={{ opacity: r.eligible ? 1 : 0.5 }}>
-              <span className="ln" style={{ background: r.id === p.selectedId ? "#d9733a" : ROUTE_COLORS[r.id] }} />
-              {r.id} {r.name}{r.id === p.selectedId ? " ★" : ""}
+            <div className={`row ${r.id === p.focusId ? "foc" : ""}`} key={r.id} style={{ opacity: r.eligible ? 1 : 0.45 }} onMouseEnter={() => p.onFocus(r.id)} onMouseLeave={() => p.onFocus(null)}>
+              <span className="ln" style={{ background: r.id === p.selectedId ? ACCENT : ROUTE_COLORS[r.id] }} />
+              {r.name}{r.id === p.selectedId ? <em> recommended</em> : ""}
             </div>
           ))}
         </div>
       )}
       {pick && <div className="map-overlay map-banner">Click the chart to set the {pick}</div>}
       {p.replay && replayEntry && (
-        <div className="map-overlay map-banner replay">HISTORICAL REPLAY · {fmtTime(replayEntry.timestamp)} · entry {p.replay.index + 1}/{p.replay.entries.length}</div>
+        <div className="map-overlay map-banner replay">Replay · {fmtTime(replayEntry.timestamp)} · entry {p.replay.index + 1} of {p.replay.entries.length}</div>
       )}
 
       {!p.replay && p.timeRange && (
         <div className="map-overlay map-time">
-          <span className="t">FORECAST {fmtTime(p.timeIso)}</span>
+          <span className="t">Forecast for {fmtTime(p.timeIso)}</span>
           <input type="range" min={p.timeRange[0]} max={p.timeRange[1]} step={3_600_000 * 3} value={tMs}
             onChange={(e) => p.setTimeIso(new Date(Number(e.target.value)).toISOString())} />
           <span className="src">{p.weatherInfo}</span>

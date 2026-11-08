@@ -1,4 +1,4 @@
-import type { DecisionEpisode } from "../../shared/intelligence.js";
+import type { BenchmarkScenario, DecisionEpisode, SharedExperience } from "../../shared/intelligence.js";
 import type { PolarTable } from "../../shared/types.js";
 import { dataset, predictLeg } from "../benchmark/dataset.js";
 import { strategies } from "../strategies/runtime.js";
@@ -14,6 +14,8 @@ import { intelligence } from "./store.js";
 
 export interface SimilarExperience {
   source: string;
+  store: string; // where it was retrieved from: "mongodb-atlas" | "local-json" | "local dataset (not shared)"
+  voyageTag: string | null;
   provenance: "historical-log" | "live";
   vessel: { type: string; lengthFt: number | null; polarIsSample: boolean; sameVessel: boolean | "unknown" };
   when: string;
@@ -31,10 +33,18 @@ export async function findSimilar(q: { twsKn: number; waveHeightM: number | null
     Math.sqrt(((tws - q.twsKn) / 5) ** 2 + (hs != null && q.waveHeightM != null ? ((hs - q.waveHeightM) / 0.75) ** 2 : 1) + (twa != null && q.twaDeg != null ? ((twa - q.twaDeg) / 45) ** 2 : 0.25));
   const out: SimilarExperience[] = [];
 
-  for (const sc of (dataset.current()?.scenarios ?? []).filter((s) => s.provenance === "historical-log")) {
-    const p = predictLeg(ref, polar, null, sc);
+  // Logged legs: from the shared pool (Atlas when configured); fall back to this boat's local
+  // dataset if nothing has been shared yet.
+  const pooled = await intelligence.listSharedExperiences({ twsKn: q.twsKn, waveHeightM: q.waveHeightM });
+  const legs: { sc: Pick<BenchmarkScenario, "provenance" | "courseDeg" | "distanceNm" | "durationH" | "observedSogKn" | "weather" | "sailKey" | "vessel" | "t"> & { id: string }; store: string; tag: string | null }[] = pooled.length
+    ? pooled.map((e: SharedExperience) => ({ sc: e, store: intelligence.kind, tag: e.voyageTag }))
+    : (dataset.current()?.scenarios ?? []).filter((s) => s.provenance === "historical-log").map((sc) => ({ sc, store: "local dataset (not shared)", tag: null }));
+  for (const { sc, store, tag } of legs) {
+    const p = predictLeg(ref, polar, null, { ...sc, from: { lat: 0, lon: 0 }, to: { lat: 0, lon: 0 }, split: "dev", notes: [] } as BenchmarkScenario);
     out.push({
-      source: `imported logbook leg ${sc.t.slice(0, 16)}Z`,
+      source: `logged leg ${sc.t.slice(0, 13)}Z`,
+      store,
+      voyageTag: tag,
       provenance: "historical-log",
       vessel: { type: sc.vessel.type, lengthFt: sc.vessel.lengthFt, polarIsSample: sc.vessel.polarIsSample, sameVessel: "unknown" },
       when: sc.t,
@@ -56,6 +66,8 @@ export async function findSimilar(q: { twsKn: number; waveHeightM: number | null
     const predicted = obs.reduce((a, o) => a + o.predicted!.sogKn, 0) / obs.length;
     out.push({
       source: `shared episode (vessel ${e.vessel.vesselId.slice(0, 6)}…)`,
+      store: intelligence.kind,
+      voyageTag: null,
       provenance: "live",
       vessel: { type: e.vessel.type, lengthFt: e.vessel.lengthFt, polarIsSample: e.vessel.polarIsSample, sameVessel: "unknown" },
       when: e.createdAt,

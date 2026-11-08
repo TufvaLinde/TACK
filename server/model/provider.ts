@@ -5,9 +5,12 @@ import { netFetch, OfflineError } from "../net.js";
 // Llama served by any OpenAI-compatible local server (llama.cpp, Ollama, vLLM) can
 // replace it by setting MODEL_PROVIDER=local and LOCAL_MODEL_URL.
 
+/** OpenAI-style content parts; image parts are used for chartplotter screenshots. */
+export type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
 export interface ChatMessage {
   role: "developer" | "system" | "user" | "assistant";
-  content: string;
+  content: string | ContentPart[];
 }
 
 export interface JsonSchemaSpec {
@@ -21,7 +24,7 @@ export interface ModelProvider {
   readonly configured: boolean;
   /** true if the provider runs on the boat (usable without internet) */
   readonly local: boolean;
-  complete(messages: ChatMessage[], opts?: { json?: JsonSchemaSpec; maxTokens?: number; effort?: string }): Promise<string>;
+  complete(messages: ChatMessage[], opts?: { json?: JsonSchemaSpec; maxTokens?: number; effort?: string; model?: string }): Promise<string>;
 }
 
 export class ModelError extends Error {
@@ -45,10 +48,10 @@ class ChatCompletionsProvider implements ModelProvider {
     return this.local ? !!this.baseUrl : !!this.apiKey;
   }
 
-  async complete(messages: ChatMessage[], opts: { json?: JsonSchemaSpec; maxTokens?: number; effort?: string } = {}) {
+  async complete(messages: ChatMessage[], opts: { json?: JsonSchemaSpec; maxTokens?: number; effort?: string; model?: string } = {}) {
     if (!this.configured) throw new ModelError(`${this.name} is not configured`);
     const body: Record<string, unknown> = {
-      model: this.model,
+      model: opts.model ?? this.model,
       messages: this.local ? messages.map((m) => (m.role === "developer" ? { ...m, role: "system" } : m)) : messages,
       max_completion_tokens: opts.maxTokens ?? 4000,
     };
@@ -96,7 +99,7 @@ export const model = {
   get lastError() {
     return lastError;
   },
-  async completeJson<T>(messages: ChatMessage[], schema: JsonSchemaSpec, opts: { maxTokens?: number; effort?: string } = {}): Promise<{ data: T; via: string }> {
+  async completeJson<T>(messages: ChatMessage[], schema: JsonSchemaSpec, opts: { maxTokens?: number; effort?: string; vision?: boolean } = {}): Promise<{ data: T; via: string }> {
     const text = await this.complete(messages, { ...opts, json: schema });
     try {
       return { data: JSON.parse(text.text) as T, via: text.via };
@@ -104,15 +107,17 @@ export const model = {
       throw new ModelError(`${text.via} returned invalid JSON`);
     }
   },
-  async complete(messages: ChatMessage[], opts: { json?: JsonSchemaSpec; maxTokens?: number; effort?: string } = {}): Promise<{ text: string; via: string }> {
+  async complete(messages: ChatMessage[], opts: { json?: JsonSchemaSpec; maxTokens?: number; effort?: string; vision?: boolean } = {}): Promise<{ text: string; via: string }> {
     const chain = [this.primary, ...(this.primary === localProvider ? [] : [localProvider])].filter((p) => p.configured);
     if (!chain.length) throw new ModelError("No language model configured (set META_API_KEY or LOCAL_MODEL_URL)");
     let err: Error | null = null;
     for (const p of chain) {
       try {
-        const text = await p.complete(messages, opts);
+        // Image inputs go to the configured vision-capable model of each provider.
+        const m = opts.vision ? (p === localProvider ? config.local.visionModel : config.meta.visionModel) : undefined;
+        const text = await p.complete(messages, { ...opts, model: m });
         lastError = null;
-        return { text, via: p.model };
+        return { text, via: m ?? p.model };
       } catch (e) {
         err = e as Error;
         lastError = err.message;

@@ -7,7 +7,7 @@ import { CHANGE_SCHEMA, PREFERENCE_GUIDE } from "../preferences/objectives.js";
 // priorities and a question at the same time ("Crew is tired, 18 kn from the SE — can we ease off tonight?").
 
 export interface Interpretation {
-  intents: ("log_report" | "preference" | "question" | "chit_chat")[];
+  intents: ("log_report" | "preference" | "question" | "chit_chat" | "watch_change" | "update_route" | "open_logbook")[];
   observation: any | null;
   objectiveChange: any | null;
   question: string | null;
@@ -19,7 +19,7 @@ const SCHEMA = {
   additionalProperties: false,
   required: ["intents", "observation", "objectiveChange", "question"],
   properties: {
-    intents: { type: "array", items: { type: "string", enum: ["log_report", "preference", "question", "chit_chat"] } },
+    intents: { type: "array", items: { type: "string", enum: ["log_report", "preference", "question", "chit_chat", "watch_change", "update_route", "open_logbook"] } },
     observation: { anyOf: [{ type: "null" }, OBS_SCHEMA] },
     objectiveChange: { anyOf: [{ type: "null" }, CHANGE_SCHEMA] },
     question: { type: ["string", "null"] },
@@ -31,10 +31,13 @@ export async function interpret(message: string, nowIso: string): Promise<Interp
     [
       {
         role: "developer",
-        content: `You are the intake layer of TACK, an onboard sailing tactician. Classify the captain's message and extract structure.
+        content: `You are the intake layer of TACK TACK, an onboard sailing tactician. Classify the captain's message and extract structure.
 - log_report: the message reports observations (position, heading, speeds, wind, sails, sea, crew condition). Fill "observation"; use null for anything not stated; never invent numbers. Wind direction = where it comes FROM.
 - preference: the message changes routing priorities or constraints. Fill "objectiveChange".
 - question: the message asks something. Put the question in "question".
+- watch_change: the captain wants to start the watch-change routine ("let's do a watch change", "changing watch").
+- update_route: the captain asks for a new or updated route / re-plan ("let's update the route", "re-route us").
+- open_logbook: the captain wants to see the logbook or journal.
 Otherwise set the field to null.
 
 Objective rules:
@@ -54,7 +57,11 @@ export function interpretOffline(message: string): Omit<Interpretation, "via" | 
   const intents: Interpretation["intents"] = [];
   if (/\d+(\.\d+)?\s*(kn|knots|kts)|heading|°|\bwind\b.*\d|crew (is|are)|reef|genoa|main/.test(t)) intents.push("log_report");
   if (/priorit|comfort|quick|fast|motor|deadline|arrive by|slow down|scenic|we have time|plenty of time|avoid/.test(t)) intents.push("preference");
-  if (/\?$|^(what|when|where|why|how|which|did|do|is|are|can|show)\b/.test(t.trim())) intents.push("question");
+  if (/watch ?change|change (of )?watch|changing (the )?watch|new watch/.test(t)) intents.push("watch_change");
+  if (/(update|new|re-?plan|re-?calculate|re-?compute|refresh|plan)\b.*\broute|re-?route|re-?plan/.test(t)) intents.push("update_route");
+  if (/(open|show|view|see).*\b(log ?book|journal)\b/.test(t)) intents.push("open_logbook");
+  const workflow = intents.some((i) => i === "watch_change" || i === "update_route" || i === "open_logbook");
+  if (!workflow && /\?$|^(what|when|where|why|how|which|did|do|is|are|can|show)\b/.test(t.trim())) intents.push("question");
   return { intents: intents.length ? intents : ["question"], question: intents.includes("question") || !intents.length ? message : null };
 }
 
@@ -63,11 +70,11 @@ export async function answer(question: string, context: unknown): Promise<{ text
     [
       {
         role: "developer",
-        content: `You are TACK, an onboard sailing tactician assisting the captain. Answer concisely (≤ 120 words unless asked for detail) using ONLY the context provided.
-- Distinguish forecasts (Open-Meteo, with retrieval time) from observations (logbook) and estimates (TACK routing engine).
-- The route recommendation was made by SubQ Snap from TACK's candidate routes; explain trade-offs using the metrics.
+        content: `You are TACK TACK, an onboard sailing tactician assisting the captain. Answer concisely (≤ 120 words unless asked for detail) using ONLY the context provided.
+- Distinguish forecasts (Open-Meteo, with retrieval time) from observations (logbook) and estimates (TACK TACK routing engine).
+- The route recommendation was made by SubQ Snap from TACK TACK's candidate routes; explain trade-offs using the metrics.
 - If the context does not contain the answer, say so. Never invent measurements or weather.
-- The captain decides; TACK is not certified navigation software.`,
+- The captain decides; TACK TACK is not certified navigation software.`,
       },
       { role: "user", content: `CONTEXT:\n${JSON.stringify(context)}\n\nCAPTAIN: ${question}` },
     ],

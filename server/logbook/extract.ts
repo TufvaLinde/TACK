@@ -5,13 +5,14 @@ import { model } from "../model/provider.js";
 // Rule: never invent measurements — anything not stated is null and listed as missing.
 
 export const KEY_FIELDS = ["position", "headingDeg", "sogKn", "stwKn", "twsKn", "twdDeg", "sailPlan", "crewCondition", "seaState"] as const;
+const FIELD_ORDER = ["position", "headingDeg", "cogDeg", "sogKn", "stwKn", "twsKn", "twdDeg", "awaDeg", "windReference", "gustKn", "pressureHpa", "waveHeightM", "seaState", "sailPlan", "crewCondition", "remarks", "confidence", "notes"];
 
 const nullable = (type: string | string[], extra: Record<string, unknown> = {}) => ({ type: [...(Array.isArray(type) ? type : [type]), "null"], ...extra });
 
 export const OBS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["position", "headingDeg", "cogDeg", "sogKn", "stwKn", "twsKn", "twdDeg", "windReference", "gustKn", "pressureHpa", "waveHeightM", "seaState", "sailPlan", "crewCondition", "remarks", "confidence", "notes"],
+  required: FIELD_ORDER,
   properties: {
     position: { anyOf: [{ type: "null" }, { type: "object", additionalProperties: false, required: ["lat", "lon"], properties: { lat: { type: "number", description: "decimal degrees, south negative" }, lon: { type: "number", description: "decimal degrees, west negative" } } }] },
     headingDeg: nullable("number", { description: "compass heading the bow points, degrees" }),
@@ -20,6 +21,7 @@ export const OBS_SCHEMA = {
     stwKn: nullable("number", { description: "speed through water, knots" }),
     twsKn: nullable("number", { description: "wind speed, knots" }),
     twdDeg: nullable("number", { description: "direction the wind blows FROM, degrees true" }),
+    awaDeg: nullable("number", { description: "apparent wind angle off the bow, 0..180 degrees" }),
     windReference: nullable("string", { enum: ["true", "apparent", "unspecified", null] }),
     gustKn: nullable("number"),
     pressureHpa: nullable("number"),
@@ -64,7 +66,7 @@ export function missingFields(o: Observations): string[] {
 export function emptyObservations(): Observations {
   return {
     position: null, headingDeg: null, cogDeg: null, sogKn: null, stwKn: null, twsKn: null, twdDeg: null,
-    windReference: null, gustKn: null, pressureHpa: null, waveHeightM: null, seaState: null, sailPlan: null,
+    awaDeg: null, windReference: null, gustKn: null, pressureHpa: null, waveHeightM: null, seaState: null, sailPlan: null,
     crewCondition: null, tripLogNm: null, tanks: null, remarks: null,
   };
 }
@@ -78,6 +80,32 @@ export async function extractWithModel(text: string): Promise<{ obs: Observation
     { name: "logbook_observation", schema: OBS_SCHEMA as unknown as Record<string, unknown> },
   );
   return sanitizeObservation(data, via);
+}
+
+const IMAGE_SYSTEM = `You read a photo or screenshot of a sailing yacht's chartplotter or instrument display and return the values shown.
+Rules:
+- Report ONLY values that are clearly legible on the image. Anything not visible or not legible is null. Never estimate, infer or invent a value.
+- Convert positions to decimal degrees (south and west negative).
+- HDG = headingDeg, COG = cogDeg, SOG = sogKn, STW/BSP/Boat speed = stwKn, TWS = twsKn, TWD = twdDeg (direction wind comes FROM), AWA = awaDeg (0..180, note port/starboard in notes).
+- If only apparent wind speed (AWS) is shown, do not put it in twsKn; mention it in notes.
+- If units are not knots/degrees/metres, convert and say so in notes. If a value is ambiguous, leave it null and explain in notes.
+- sailPlan, crewCondition and seaState are normally not on a chartplotter: null unless explicitly displayed.
+- remarks: a short description of what the display shows (e.g. "B&G Zeus chart page with data bar"), no measurements.`;
+
+/** Reads a chartplotter screenshot with an image-capable model. Nothing is stored here — the captain confirms first. */
+export async function extractFromImage(dataUrl: string): Promise<{ obs: Observations; info: ExtractionInfo }> {
+  if (!/^data:image\/(png|jpe?g|webp|gif|heic|heif);base64,/i.test(dataUrl)) throw new Error("Expected a PNG, JPEG or WebP image");
+  const { data, via } = await model.completeJson<any>(
+    [
+      { role: "developer", content: IMAGE_SYSTEM },
+      { role: "user", content: [{ type: "text", text: "Extract the navigation data visible on this chartplotter image." }, { type: "image_url", image_url: { url: dataUrl } }] },
+    ],
+    { name: "chartplotter_reading", schema: OBS_SCHEMA as unknown as Record<string, unknown> },
+    { vision: true, maxTokens: 6000 },
+  );
+  const res = sanitizeObservation(data, via);
+  res.info.notes.unshift("Read from a chartplotter image — values need captain confirmation.");
+  return res;
 }
 
 /** Validate model-extracted observations; implausible values are discarded, never "fixed". */
@@ -98,6 +126,7 @@ export function sanitizeObservation(data: any, via: string): { obs: Observations
   check("headingDeg", (v) => v >= 0 && v <= 360);
   check("cogDeg", (v) => v >= 0 && v <= 360);
   check("twdDeg", (v) => v >= 0 && v <= 360);
+  check("awaDeg", (v) => v >= 0 && v <= 180);
   check("sogKn", (v) => v >= 0 && v < 40);
   check("stwKn", (v) => v >= 0 && v < 40);
   check("twsKn", (v) => v >= 0 && v < 120);

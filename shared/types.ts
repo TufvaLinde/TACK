@@ -98,6 +98,7 @@ export interface Observations {
   twsKn: number | null;
   twdDeg: number | null; // direction wind blows FROM
   windReference: "true" | "apparent" | "unspecified" | null;
+  awaDeg?: number | null; // apparent wind angle, 0..180 off the bow (side in remarks)
   gustKn: number | null;
   pressureHpa: number | null;
   waveHeightM: number | null;
@@ -123,7 +124,7 @@ export interface LogEntry {
   kind: LogEntryKind;
   timestamp: string; // ISO
   timestampProvenance: string;
-  recordedAt: string; // when TACK stored it
+  recordedAt: string; // when TACK TACK stored it
   source: string; // "captain:nl" | "captain:form" | "import:<file>" | "tack"
   rawText: string | null; // original, unmodified captain text
   observations: Observations | null;

@@ -92,7 +92,7 @@ export function bboxFor(a: LatLon, b: LatLon): BBox {
 export function addSystemEntry(message: string): LogEntry {
   const now = new Date().toISOString();
   return logbook.upsert({
-    id: newId("sys"), voyageId: LIVE_ID, kind: "system", timestamp: now, timestampProvenance: "TACK clock", recordedAt: now,
+    id: newId("sys"), voyageId: LIVE_ID, kind: "system", timestamp: now, timestampProvenance: "TACK TACK clock", recordedAt: now,
     source: "tack", rawText: null, observations: null, extraction: null, message,
   });
 }
@@ -110,7 +110,7 @@ export async function ingestReport(text: string, opts: { source?: string; timest
   }
   const entry: LogEntry = {
     id: newId("log"), voyageId: LIVE_ID, kind: "observation",
-    timestamp: opts.timestamp ?? now, timestampProvenance: opts.timestamp ? "captain-supplied time" : "time of submission (TACK clock)",
+    timestamp: opts.timestamp ?? now, timestampProvenance: opts.timestamp ? "captain-supplied time" : "time of submission (TACK TACK clock)",
     recordedAt: now, source: opts.source ?? "captain:nl", rawText: text, observations: res.obs, extraction: res.info,
   };
   logbook.upsert(entry);
@@ -159,7 +159,7 @@ export async function plan(opts: { refreshWeather?: boolean; recordDecision?: bo
   const ws = weather.status();
   const field = weather.getField();
   if (!field || !weather.covers(bbox)) {
-    return { routing: null, decision: null, steps, error: !field ? "No weather forecast available. Connect to the internet to retrieve one — TACK will not route on invented weather." : "The cached forecast does not cover the current position and destination. Connect to retrieve a new forecast." };
+    return { routing: null, decision: null, steps, error: !field ? "No weather forecast available. Connect to the internet to retrieve one — TACK TACK will not route on invented weather." : "The cached forecast does not cover the current position and destination. Connect to retrieve a new forecast." };
   }
 
   // 2. Routing — with the versioned production strategy
@@ -200,7 +200,7 @@ export async function plan(opts: { refreshWeather?: boolean; recordDecision?: bo
   if (opts.recordDecision !== false) {
     const sel = routing.routes.find((r) => r.id === decision.selectedRouteId);
     logbook.upsert({
-      id: newId("dec"), voyageId: LIVE_ID, kind: "decision", timestamp: decision.createdAt, timestampProvenance: "TACK clock", recordedAt: decision.createdAt,
+      id: newId("dec"), voyageId: LIVE_ID, kind: "decision", timestamp: decision.createdAt, timestampProvenance: "TACK TACK clock", recordedAt: decision.createdAt,
       source: "tack", rawText: null, observations: null, extraction: null, decision,
       message: sel
         ? `Recommended ${sel.id} ${sel.name} (${decision.engine}${decision.confidence != null ? `, confidence ${(decision.confidence * 100).toFixed(0)}%` : ""}). ETA ${sel.metrics.etaIso?.slice(0, 16).replace("T", " ")} UTC (estimate). Awaiting captain.`

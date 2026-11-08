@@ -188,3 +188,24 @@ export interface ImprovementRun {
   model: string | null;
   mode: "agent" | "self-test";
 }
+
+/* ───────────── Shared experience pool (collective intelligence) ───────────── */
+
+/** An anonymised sailing leg contributed to the shared pool. Observed outcome + the archived
+ *  forecast for that place and hour; positions rounded to 0.5°, time to the hour, no free text. */
+export interface SharedExperience {
+  id: string;
+  provenance: "historical-log";
+  contributedAt: string;
+  voyageTag: string; // e.g. "transatlantic crossing, Apr–May 2026"
+  vessel: VesselProfile; // vesselId is hashed
+  t: string; // rounded to the hour
+  from: LatLon; // rounded to 0.5°
+  to: LatLon;
+  durationH: number; // ACTUAL
+  distanceNm: number; // ACTUAL
+  courseDeg: number;
+  observedSogKn: number; // ACTUAL
+  weather: BenchmarkScenario["weather"]; // archived FORECAST, not an observation
+  sailKey: string;
+}

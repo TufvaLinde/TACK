@@ -102,7 +102,7 @@ SOFT weights 0..1: speed (arrive sooner), comfort (gentle motion, smaller waves,
 - Lasting priorities go in baseWeights. Use null for weights that do not change.
 - A wish for comfort never relaxes a safety limit.
 - Do not invent constraints. If something is ambiguous (e.g. an unknown place), put a short question in clarificationNeeded.
-- Notes: things TACK cannot evaluate (e.g. anchorage quality offshore) — say so.`;
+- Notes: things TACK TACK cannot evaluate (e.g. anchorage quality offshore) — say so.`;
 
 export async function parsePreference(text: string, nowIso: string): Promise<ObjectiveChange> {
   const { data, via } = await model.completeJson<any>(

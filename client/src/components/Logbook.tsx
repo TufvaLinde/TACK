@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, compass, fmtLat, fmtLon, fmtTime, type LearnedCorrection, type LogEntry, type Voyage } from "../api";
+import { api, compass, fmtClock, fmtDay, fmtPos, fmtTime, type LearnedCorrection, type LogEntry, type Voyage } from "../api";
+import { FleetMemory, type PoolLeg } from "./FleetMemory";
+
+/* The logbook as a sailing journal: a chronological timeline grouped by day, where each
+   entry says when, where, who wrote it, what was seen, what was decided and what followed. */
 
 interface Props {
   voyages: Voyage[];
@@ -8,65 +12,276 @@ interface Props {
   setReplay: (r: { voyageId: string; index: number } | null) => void;
   onEntries: (voyageId: string, entries: LogEntry[]) => void;
   onImported: () => void;
+  fleetDefaults: { twsKn: number | null; waveHeightM: number | null };
+  onPoolLegs: (legs: PoolLeg[]) => void;
+  onPoolHighlight: (whens: string[]) => void;
 }
 
-function ObsChips({ e }: { e: LogEntry }) {
+export type Category = "captain" | "instrument" | "forecast" | "ai" | "recommendation" | "outcome" | "note";
+
+export const CATEGORY: Record<Category, { label: string; plural: string }> = {
+  captain: { label: "Captain", plural: "Captain" },
+  instrument: { label: "Instruments", plural: "Instruments" },
+  forecast: { label: "Forecast", plural: "Forecasts" },
+  ai: { label: "Interpretation", plural: "Interpretations" },
+  recommendation: { label: "Recommendation", plural: "Recommendations" },
+  outcome: { label: "Outcome", plural: "Outcomes" },
+  note: { label: "Note", plural: "Notes" },
+};
+
+export function categorize(e: LogEntry): Category {
+  if (e.kind === "observation") {
+    if (e.source.startsWith("import:") || e.source === "captain:form" || e.source === "captain:watch-form" || e.source === "captain:watch-image") return "instrument";
+    return "captain";
+  }
+  if (e.kind === "preference") return "captain";
+  if (e.kind === "decision") return e.source === "tack" ? "recommendation" : "outcome";
+  const m = e.message ?? "";
+  if (/forecast/i.test(m)) return "forecast";
+  if (/feedback/i.test(m)) return "outcome";
+  if (/re-interpret|sync/i.test(m)) return "ai";
+  return "note";
+}
+
+function author(e: LogEntry): string {
+  const s = e.source;
+  if (s === "captain:watch-nl") return "Captain · watch change, in their words";
+  if (s === "captain:watch-form") return "Captain · watch change, instruments entered";
+  if (s === "captain:watch-image") return "Chartplotter photo · confirmed by captain";
+  if (s === "captain:form") return "Captain · instrument form";
+  if (s === "captain:assistant" || s === "captain:nl") return e.kind === "preference" ? "Captain · instruction" : "Captain · in conversation";
+  if (s === "captain:action") return "Captain";
+  if (s.startsWith("import:")) return `Deck log · ${s.slice(7)}`;
+  if (e.kind === "decision") return e.decision?.engine ? `TACK TACK · ${e.decision.engine}` : "TACK TACK";
+  if (/forecast/i.test(e.message ?? "")) return "TACK TACK · Open-Meteo";
+  return "TACK TACK";
+}
+
+/** Human-readable readings. Only stated values appear. */
+function readings(e: LogEntry): [string, string][] {
   const o = e.observations;
-  if (!o) return null;
-  const items: [string, string][] = [];
-  if (o.position) items.push(["pos", `${fmtLat(o.position.lat)} ${fmtLon(o.position.lon)}`]);
-  if (o.headingDeg != null) items.push(["hdg", `${o.headingDeg}°`]);
-  if (o.cogDeg != null) items.push(["cog", `${o.cogDeg}°`]);
-  if (o.sogKn != null) items.push(["sog", `${o.sogKn} kn`]);
-  if (o.stwKn != null) items.push(["stw", `${o.stwKn} kn`]);
-  if (o.twsKn != null || o.twdDeg != null) items.push(["wind", `${o.twsKn ?? "?"} kn ${o.twdDeg != null ? `${o.twdDeg}° ${compass(o.twdDeg)}` : ""}`]);
-  if (o.pressureHpa != null) items.push(["baro", `${o.pressureHpa}`]);
-  if (o.sailPlan) items.push(["sails", o.sailPlan.raw ?? `main ${o.sailPlan.main}, head ${o.sailPlan.headsail}${o.sailPlan.engine ? ", engine" : o.sailPlan.engine === false ? ", no engine" : ""}`]);
-  if (o.seaState) items.push(["sea", o.seaState]);
-  if (o.crewCondition) items.push(["crew", o.crewCondition]);
-  if (o.tanks?.diesel) items.push(["diesel", o.tanks.diesel]);
-  if (o.tanks?.water) items.push(["water", o.tanks.water]);
-  return <div className="kv">{items.map(([k, v]) => <span key={k}>{k} <b>{v}</b></span>)}</div>;
+  if (!o) return [];
+  const out: [string, string][] = [];
+  if (o.headingDeg != null) out.push(["Heading", `${o.headingDeg}°`]);
+  if (o.cogDeg != null) out.push(["COG", `${o.cogDeg}°`]);
+  if (o.sogKn != null) out.push(["SOG", `${o.sogKn} kn`]);
+  if (o.stwKn != null) out.push(["STW", `${o.stwKn} kn`]);
+  if (o.twsKn != null || o.twdDeg != null) out.push(["Wind", `${o.twsKn != null ? `${o.twsKn} kn` : ""}${o.twdDeg != null ? ` from ${compass(o.twdDeg)} (${o.twdDeg}°)` : ""}`.trim()]);
+  if (o.awaDeg != null) out.push(["AWA", `${o.awaDeg}°`]);
+  if (o.gustKn != null) out.push(["Gusts", `${o.gustKn} kn`]);
+  if (o.pressureHpa != null) out.push(["Barometer", `${o.pressureHpa} hPa`]);
+  if (o.waveHeightM != null) out.push(["Waves", `${o.waveHeightM} m`]);
+  if (o.seaState) out.push(["Sea", o.seaState]);
+  if (o.sailPlan) {
+    const sp = o.sailPlan;
+    out.push(["Sails", sp.raw ?? ([sp.main !== "unknown" && `main ${sp.main}${sp.reefLevel ? ` (reef ${sp.reefLevel})` : ""}`, sp.headsail !== "unknown" && `headsail ${sp.headsail}`].filter(Boolean).join(", ") || "—")]);
+    if (sp.engine != null) out.push(["Engine", sp.engine ? "running" : "off"]);
+  }
+  if (o.crewCondition) out.push(["Crew", o.crewCondition]);
+  if (o.tanks?.diesel) out.push(["Diesel", o.tanks.diesel]);
+  if (o.tanks?.water) out.push(["Water", o.tanks.water]);
+  return out;
 }
 
-function Row({ e, cur }: { e: LogEntry; cur?: boolean }) {
-  const ref = useRef<HTMLTableRowElement>(null);
-  useEffect(() => { if (cur) ref.current?.scrollIntoView({ block: "nearest" }); }, [cur]);
+function Entry({ e, cat, pos, posApprox, next, cur }: { e: LogEntry; cat: Category; pos: { lat: number; lon: number } | null; posApprox: boolean; next: string | null; cur?: boolean }) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => { if (cur) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [cur]);
+  const r = readings(e);
   const isImport = e.source.startsWith("import:");
+  const words = e.kind === "preference" ? e.rawText : e.kind === "observation" && !isImport ? e.rawText : null;
+  const remark = e.observations?.remarks && e.observations.remarks !== words ? e.observations.remarks : null;
+  const interp = e.interpretation && (e.interpretation.seaState || e.interpretation.events.length > 0 || e.interpretation.crewMood) ? e.interpretation : null;
+  const modelRead = e.extraction && e.kind === "observation" && !/form|csv-import|entered by captain/.test(e.extraction.method) ? e.extraction : null;
   return (
-    <tr ref={ref} className={`k-${e.kind} ${cur ? "cur" : ""}`}>
-      <td className="mono">{fmtTime(e.timestamp)}</td>
-      <td><span className={`kind ${e.kind}`}>{e.kind}</span></td>
-      <td>
-        {e.kind === "observation" && (isImport
-          ? <div className="raw">{e.observations?.remarks ?? <span className="empty">no remark</span>}</div>
-          : e.rawText && <div className="raw">“{e.rawText}”</div>)}
-        {e.kind === "preference" && <div className="raw">“{e.rawText}”</div>}
-        {e.kind === "preference" && e.preference && <div className="kv"><span>→ <b>{e.preference.change.summary}</b></span></div>}
-        {(e.kind === "decision" || e.kind === "system") && <div>{e.message}</div>}
-        <ObsChips e={e} />
-        {e.interpretation && (e.interpretation.seaState || e.interpretation.events.length > 0 || e.interpretation.crewMood) && (
-          <div className="kv" style={{ color: "#5a4380" }}>
-            <span className="tag est">ai</span>
-            {e.interpretation.seaState && <span>sea <b>{e.interpretation.seaState}</b></span>}
-            {e.interpretation.crewMood && <span>mood <b>{e.interpretation.crewMood}</b></span>}
-            {e.interpretation.events.map((x) => <span key={x}>{x}</span>)}
+    <article ref={ref} className={`entry c-${cat} ${cur ? "cur" : ""}`}>
+      <div className="when">{fmtClock(e.timestamp)}<small>UTC</small></div>
+      <div className="dot" />
+      <div className="body">
+        <div className="byline">
+          <span className="cat">{CATEGORY[cat].label}</span>
+          <span>{author(e)}</span>
+          {pos && <span className="pos" title={posApprox ? "Last known position before this entry" : "Position recorded with this entry"}>{posApprox ? "≈ " : ""}{fmtPos(pos)}</span>}
+        </div>
+        {words && <p className="words">“{words}”</p>}
+        {isImport && remark && <p className="words">{remark}</p>}
+        {(e.kind === "decision" || e.kind === "system") && e.message && <p className="msg">{e.message}</p>}
+        {r.length > 0 && (
+          <dl className="readout">{r.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+        )}
+        {!isImport && remark && <p className="remark">{remark}</p>}
+        {e.kind === "preference" && e.preference && (
+          <div className="interp"><span>TACK TACK read this as</span> {e.preference.change.summary}{e.preference.change.temporary ? ` — for ${Math.round(e.preference.change.temporary.durationHours)} h` : ""}</div>
+        )}
+        {interp && (
+          <div className="interp">
+            <span>Interpretation · {interp.method}</span>
+            {[interp.seaState && `sea ${interp.seaState}`, interp.crewMood && `crew ${interp.crewMood}`, ...interp.events].filter(Boolean).join(" · ")}
           </div>
         )}
-        {e.extraction && (
+        {modelRead && (
           <div className="prov">
-            {e.source} · {e.extraction.method} · confidence {(e.extraction.confidence * 100).toFixed(0)}%
-            {e.extraction.missingFields.length > 0 && e.kind === "observation" && [e.observations?.position, e.observations?.sogKn, e.observations?.twsKn, e.observations?.headingDeg, e.observations?.cogDeg].some((v) => v != null) && <> · <span className="miss">not stated: {e.extraction.missingFields.join(", ")}</span></>}
-            {e.extraction.pendingModelReview && <> · <span className="miss">pending re-interpretation when online</span></>}
-            {e.extraction.notes.length > 0 && <> · {e.extraction.notes.join(" · ")}</>}
+            Read by {modelRead.method} · {Math.round(modelRead.confidence * 100)}% confidence
+            {modelRead.pendingModelReview && " · will be re-read when online"}
+            {modelRead.notes.length > 0 && <> · {modelRead.notes.join(" · ")}</>}
           </div>
         )}
-      </td>
-    </tr>
+        {next && <div className="next"><span>What happened next</span> {next}</div>}
+      </div>
+    </article>
   );
 }
 
-function Learning({ upTo }: { upTo?: string }) {
+const FILTERS: (Category | "all")[] = ["all", "captain", "instrument", "forecast", "ai", "recommendation", "outcome"];
+
+export function Logbook(p: Props) {
+  const historical = p.voyages.filter((v) => v.kind === "historical");
+  const [tab, setTab] = useState<string>("live");
+  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [importing, setImporting] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Category | "all">("all");
+  const [newestFirst, setNewestFirst] = useState(true);
+  const voyageId = tab === "learning" || tab === "fleet" ? null : tab;
+
+  useEffect(() => {
+    if (!voyageId) return;
+    setLoading(true);
+    api.logbook(voyageId).then((e) => { setEntries(e); p.onEntries(voyageId, e); }).finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voyageId, p.refreshKey]);
+
+  const obsEntries = useMemo(() => entries.filter((e) => e.kind === "observation"), [entries]);
+  const replaying = !!p.replay && p.replay.voyageId === tab;
+
+  useEffect(() => {
+    if (!playing || !replaying) return;
+    const t = setInterval(() => {
+      const next = (p.replay!.index ?? 0) + 1;
+      if (next >= obsEntries.length) { setPlaying(false); return; }
+      p.setReplay({ voyageId: tab, index: next });
+    }, 650);
+    return () => clearInterval(t);
+  }, [playing, replaying, p, obsEntries.length, tab]);
+
+  // Derived journal: category, best-known position and "what happened next" for each entry.
+  const journal = useMemo(() => {
+    let lastPos: { lat: number; lon: number } | null = null;
+    const out = entries.map((e, i) => {
+      const own = e.observations?.position ?? null;
+      if (own) lastPos = own;
+      const cat = categorize(e);
+      let next: string | null = null;
+      if (cat === "recommendation" && e.decision) {
+        const act = entries.slice(i + 1).find((x) => x.source === "captain:action" && x.decision?.id === e.decision!.id);
+        const after = entries.slice(i + 1).find((x) => x.kind === "observation" && x.timestamp > (act?.timestamp ?? e.timestamp));
+        const parts = [act ? `${act.message} (${fmtClock(act.timestamp)} UTC)` : "Not yet accepted or overridden."];
+        if (after?.observations) {
+          const o = after.observations;
+          const bits = [o.sogKn != null && `${o.sogKn} kn`, o.twsKn != null && `wind ${o.twsKn} kn`, o.crewCondition && `crew ${o.crewCondition}`].filter(Boolean);
+          parts.push(`Next report ${fmtTime(after.timestamp)}${bits.length ? `: ${bits.join(", ")}` : ""}.`);
+        }
+        next = parts.join(" ");
+      }
+      return { e, cat, pos: own ?? lastPos, posApprox: !own && !!lastPos, next, hasAi: !!(e.interpretation || e.kind === "preference" || (e.extraction && e.kind === "observation" && !/form|csv-import|entered by captain/.test(e.extraction.method))) };
+    });
+    return out;
+  }, [entries]);
+
+  const doImport = async (f: File) => {
+    setImporting(`Importing ${f.name} and interpreting remarks…`);
+    try {
+      const r = await api.importLog(f.name, await f.text(), 2026);
+      setImporting(`Imported ${r.imported} entries · ${r.interpretation}`);
+      p.onImported();
+      setTab(r.voyageId);
+    } catch (e) {
+      setImporting(`Import failed: ${(e as Error).message}`);
+    }
+  };
+
+  const replayEntry = replaying ? obsEntries[p.replay!.index] : null;
+  const shownBase = replaying
+    ? journal.filter((j) => j.e.kind === "observation")
+    : journal.filter((j) => filter === "all" || j.cat === filter || (filter === "ai" && j.hasAi));
+  const shown = replaying || !newestFirst ? shownBase : [...shownBase].reverse();
+  const days: { day: string; items: typeof shown }[] = [];
+  for (const j of shown) {
+    const d = fmtDay(j.e.timestamp);
+    if (days.at(-1)?.day !== d) days.push({ day: d, items: [] });
+    days.at(-1)!.items.push(j);
+  }
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: journal.length };
+    for (const j of journal) { c[j.cat] = (c[j.cat] ?? 0) + 1; if (j.hasAi && j.cat !== "ai") c.ai = (c.ai ?? 0) + 1; }
+    return c;
+  }, [journal]);
+
+  const voyage = p.voyages.find((v) => v.id === tab);
+  return (
+    <div className="journal">
+      <header className="journal-head">
+        <h1>Logbook</h1>
+        <nav className="voyages">
+          <button className={tab === "live" ? "on" : ""} onClick={() => { setTab("live"); p.setReplay(null); setPlaying(false); }}>This passage</button>
+          {historical.map((v) => <button key={v.id} className={tab === v.id ? "on" : ""} onClick={() => setTab(v.id)}>{v.name.replace(" (historical)", "").replace(/\.(csv|txt|json|psv)$/, "")}</button>)}
+          <button className={tab === "learning" ? "on" : ""} onClick={() => setTab("learning")}>Boat performance</button>
+          <button className={tab === "fleet" ? "on" : ""} onClick={() => { setTab("fleet"); p.setReplay(null); setPlaying(false); }}>Fleet memory</button>
+        </nav>
+        {voyage && tab !== "live" && <p className="fine-note">{voyage.notes}</p>}
+      </header>
+
+      {!!voyageId && !replaying && (
+        <div className="journal-tools">
+          <div className="filters">
+            {FILTERS.map((f) => (counts[f] || f === "all") ? (
+              <button key={f} className={`${filter === f ? "on" : ""} f-${f}`} onClick={() => setFilter(f)}>
+                {f !== "all" && <i />}{f === "all" ? "Everything" : CATEGORY[f].plural}
+              </button>
+            ) : null)}
+          </div>
+          <div className="tools">
+            <button className="link" onClick={() => setNewestFirst(!newestFirst)}>{newestFirst ? "Newest first" : "Oldest first"}</button>
+            {voyageId && voyageId !== "live" && <button className="link" onClick={() => { p.setReplay({ voyageId, index: 0 }); setPlaying(true); }}>Replay on chart</button>}
+            <label className="link">Import a log<input type="file" accept=".csv,.txt,.json,.psv" hidden onChange={(e) => e.target.files?.[0] && doImport(e.target.files[0])} /></label>
+          </div>
+          {importing && <p className="fine-note">{importing}</p>}
+        </div>
+      )}
+
+      {replaying && (
+        <div className="replay-bar">
+          <button className="btn quiet" onClick={() => setPlaying(!playing)}>{playing ? "Pause" : "Play"}</button>
+          <input type="range" min={0} max={obsEntries.length - 1} value={p.replay!.index} onChange={(e) => { setPlaying(false); p.setReplay({ voyageId: tab, index: Number(e.target.value) }); }} />
+          <span>{fmtTime(replayEntry?.timestamp)}</span>
+          <button className="link" onClick={() => { setPlaying(false); p.setReplay(null); }}>Exit replay</button>
+        </div>
+      )}
+
+      <div className="journal-body">
+        {tab === "fleet" ? (
+          <FleetMemory voyages={p.voyages} defaults={p.fleetDefaults} onPool={p.onPoolLegs} onHighlight={p.onPoolHighlight} />
+        ) : tab === "learning" ? (
+          <Learning />
+        ) : loading && !entries.length ? (
+          <p className="muted">Opening the logbook…</p>
+        ) : entries.length === 0 ? (
+          <p className="muted">Nothing logged yet. Record a watch change or tell TACK TACK what’s happening aboard.</p>
+        ) : (
+          days.map((d) => (
+            <section key={d.day} className="day">
+              <h2>{d.day}</h2>
+              {d.items.map((j) => <Entry key={j.e.id} e={j.e} cat={j.cat} pos={j.pos} posApprox={j.posApprox} next={j.next} cur={replaying && j.e.id === replayEntry?.id} />)}
+            </section>
+          ))
+        )}
+        {replaying && replayEntry && <ReplayLearning upTo={replayEntry.timestamp} />}
+      </div>
+    </div>
+  );
+}
+
+function Learning({ upTo }: { upTo?: string } = {}) {
   const [c, setC] = useState<LearnedCorrection | null>(null);
   const [curves, setCurves] = useState<{ tws: number; points: { twa: number; base: number; learned: number }[] }[]>([]);
   const [polarInfo, setPolarInfo] = useState<string>("");
@@ -74,20 +289,20 @@ function Learning({ upTo }: { upTo?: string }) {
     api.learning(upTo).then(setC);
     api.polar().then((p) => { setCurves(p.curves); setPolarInfo(`${p.polar.name} (${p.polar.source}${p.polar.isSample ? " — SAMPLE" : ""})`); });
   }, [upTo]);
-  if (!c) return <div className="panel empty">Loading…</div>;
+  if (!c) return <p className="muted">Loading…</p>;
   const twsBins = [...new Set(c.bins.map((b) => b.twsRange.join("–")))];
   const twaBins = [...new Set(c.bins.map((b) => b.twaRange.join("–")))];
   // polar plot (half-rose)
   const R = 120, maxV = 9;
   const xy = (twa: number, v: number) => [R * (v / maxV) * Math.sin((twa * Math.PI) / 180), -R * (v / maxV) * Math.cos((twa * Math.PI) / 180)];
-  const colors = ["#7d8789", "#3f7d6e", "#2f5476", "#d9733a"];
+  const colors = ["#8d9498", "#2f5d50", "#3e5c76", "#c2502e"];
   const upload = async (f: File) => { await api.uploadPolar(f.name, await f.text()); api.polar().then((p) => { setCurves(p.curves); setPolarInfo(p.polar.name); }); api.learning().then(setC); };
   return (
     <div className="learning">
       <div>
         <svg width="280" height="270" viewBox="-20 -130 160 270" style={{ display: "block" }}>
-          {[3, 6, 9].map((v) => <path key={v} d={`M0 ${-R * v / maxV} A ${R * v / maxV} ${R * v / maxV} 0 0 1 0 ${R * v / maxV}`} fill="none" stroke="#d6caad" strokeWidth="0.6" />)}
-          {[0, 45, 90, 135, 180].map((a) => { const [x, y] = xy(a, maxV); return <g key={a}><line x1="0" y1="0" x2={x} y2={y} stroke="#d6caad" strokeWidth="0.5" /><text x={x * 1.07} y={y * 1.07 + 3} fontSize="7" fill="#7d8789" textAnchor="middle">{a}°</text></g>; })}
+          {[3, 6, 9].map((v) => <path key={v} d={`M0 ${-R * v / maxV} A ${R * v / maxV} ${R * v / maxV} 0 0 1 0 ${R * v / maxV}`} fill="none" stroke="var(--line)" strokeWidth="0.6" />)}
+          {[0, 45, 90, 135, 180].map((a) => { const [x, y] = xy(a, maxV); return <g key={a}><line x1="0" y1="0" x2={x} y2={y} stroke="var(--line)" strokeWidth="0.5" /><text x={x * 1.07} y={y * 1.07 + 3} fontSize="7" fill="#7d8789" textAnchor="middle">{a}°</text></g>; })}
           {curves.map((cv, i) => (
             <g key={cv.tws}>
               <polyline fill="none" stroke={colors[i]} strokeWidth="0.9" strokeDasharray="2 2" points={cv.points.map((p) => xy(p.twa, p.base).join(",")).join(" ")} />
@@ -136,90 +351,6 @@ function Learning({ upTo }: { upTo?: string }) {
   );
 }
 
-export function Logbook(p: Props) {
-  const historical = p.voyages.filter((v) => v.kind === "historical");
-  const [tab, setTab] = useState<string>("live");
-  const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [importing, setImporting] = useState<string | null>(null);
-  const voyageId = tab === "learning" ? null : tab;
-
-  useEffect(() => {
-    if (!voyageId) return;
-    setLoading(true);
-    api.logbook(voyageId).then((e) => { setEntries(e); p.onEntries(voyageId, e); }).finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voyageId, p.refreshKey]);
-
-  const obsEntries = useMemo(() => entries.filter((e) => e.kind === "observation"), [entries]);
-  const replaying = p.replay && p.replay.voyageId === tab;
-
-  useEffect(() => {
-    if (!playing || !replaying) return;
-    const t = setInterval(() => {
-      const next = (p.replay!.index ?? 0) + 1;
-      if (next >= obsEntries.length) { setPlaying(false); return; }
-      p.setReplay({ voyageId: tab, index: next });
-    }, 650);
-    return () => clearInterval(t);
-  }, [playing, replaying, p, obsEntries.length, tab]);
-
-  const doImport = async (f: File) => {
-    setImporting(`Importing ${f.name} and interpreting remarks…`);
-    try {
-      const r = await api.importLog(f.name, await f.text(), 2026);
-      setImporting(`Imported ${r.imported} entries · ${r.interpretation}`);
-      p.onImported();
-      setTab(r.voyageId);
-    } catch (e) {
-      setImporting(`Import failed: ${(e as Error).message}`);
-    }
-  };
-
-  const shown = replaying ? obsEntries : [...entries].reverse();
-  return (
-    <div className="logbook">
-      <div className="log-tabs">
-        <button className={`tab ${tab === "live" ? "on" : ""}`} onClick={() => { setTab("live"); p.setReplay(null); setPlaying(false); }}>Logbook</button>
-        {historical.map((v) => (
-          <button key={v.id} className={`tab ${tab === v.id ? "on" : ""}`} onClick={() => { setTab(v.id); }}>{v.name.replace(" (historical)", "")}</button>
-        ))}
-        <button className={`tab ${tab === "learning" ? "on" : ""}`} onClick={() => setTab("learning")}>Performance</button>
-        <div className="tools">
-          {importing && <span className="prov">{importing}</span>}
-          {voyageId && voyageId !== "live" && !replaying && <button className="btn sm" onClick={() => { p.setReplay({ voyageId, index: 0 }); setPlaying(true); }}>▶ Replay voyage</button>}
-          <label className="btn ghost sm">Import log<input type="file" accept=".csv,.txt,.json,.psv" hidden onChange={(e) => e.target.files?.[0] && doImport(e.target.files[0])} /></label>
-        </div>
-      </div>
-      {replaying && (
-        <div className="replay-bar">
-          <button className="btn sm" onClick={() => setPlaying(!playing)}>{playing ? "❚❚" : "▶"}</button>
-          <input type="range" min={0} max={obsEntries.length - 1} value={p.replay!.index} onChange={(e) => { setPlaying(false); p.setReplay({ voyageId: tab, index: Number(e.target.value) }); }} />
-          <span>{fmtTime(obsEntries[p.replay!.index]?.timestamp)}</span>
-          <button className="btn ghost sm" onClick={() => { setPlaying(false); p.setReplay(null); }}>exit replay</button>
-        </div>
-      )}
-      <div className="log-body">
-        {tab === "learning" ? (
-          <Learning upTo={replaying ? undefined : undefined} />
-        ) : loading && !entries.length ? (
-          <div className="panel empty">Loading…</div>
-        ) : entries.length === 0 ? (
-          <div className="panel empty">No entries yet. Send a watch report through the assistant, or import a historical log.</div>
-        ) : (
-          <table className="log-table">
-            <thead><tr><th style={{ width: 120 }}>Time (UTC)</th><th style={{ width: 90 }}>Kind</th><th>Entry</th></tr></thead>
-            <tbody>{shown.map((e, i) => <Row key={e.id} e={e} cur={!!replaying && i === p.replay!.index} />)}</tbody>
-          </table>
-        )}
-        {replaying && tab !== "learning" && obsEntries[p.replay!.index] && (
-          <ReplayLearning upTo={obsEntries[p.replay!.index].timestamp} />
-        )}
-      </div>
-    </div>
-  );
-}
 
 /** Shows the learned correction as it stood at the replay position. */
 function ReplayLearning({ upTo }: { upTo: string }) {
@@ -228,7 +359,7 @@ function ReplayLearning({ upTo }: { upTo: string }) {
   if (!c) return null;
   const withData = c.bins.filter((b) => b.samples);
   return (
-    <div style={{ position: "sticky", bottom: 0, background: "#f1ebf7", borderTop: "1px solid var(--rule)", padding: "6px 12px", font: "400 11px var(--mono)" }}>
+    <div className="replay-learning">
       Learning so far: {c.summary.used} usable observations ·{" "}
       {withData.map((b) => `${b.twsRange.join("–")} kn/${b.twaRange.join("–")}° ×${b.factor.toFixed(3)} (n=${b.samples})`).join(" · ") || "no full-sail observations yet"}
     </div>

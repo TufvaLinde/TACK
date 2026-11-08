@@ -49,3 +49,17 @@ test("pipe-delimited deck log imports with provenance", () => {
   assert.ok(Math.abs(o.position!.lon + 64.335) < 1e-3);
   assert.match(entries[0].timestampProvenance, /time zone not recorded/);
 });
+
+test("offline assistant recognises watch-change, route and logbook requests", async () => {
+  const { interpretOffline } = await import("./assistant/assistant.js");
+  assert.ok(interpretOffline("Let's do a watch change").intents.includes("watch_change"));
+  assert.ok(interpretOffline("Let's update the route.").intents.includes("update_route"));
+  assert.ok(interpretOffline("Show me the logbook").intents.includes("open_logbook"));
+  const both = interpretOffline("The crew is exhausted. Let's prioritize comfort tonight.");
+  assert.ok(both.intents.includes("preference") && both.intents.includes("log_report"));
+});
+
+test("chartplotter image reader rejects non-images before calling a model", async () => {
+  const { extractFromImage } = await import("./logbook/extract.js");
+  await assert.rejects(extractFromImage("hello"), /PNG, JPEG or WebP/);
+});

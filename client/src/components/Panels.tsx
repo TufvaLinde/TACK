@@ -1,47 +1,8 @@
 import { useState } from "react";
 import {
-  api, compass, fmtAge, fmtDur, fmtLat, fmtLon, fmtTime, ROUTE_COLORS,
-  type AppState, type DecisionRecord, type LogEntry, type PlanStep, type RoutingResult, type ServiceStatus,
+  ACCENT, api, compass, fmtDur, fmtLat, fmtLon, fmtTime, ROUTE_COLORS,
+  type AppState, type DecisionRecord, type LogEntry, type PlanStep, type RoutingResult,
 } from "../api";
-
-/* ───────────────────────── Top bar ───────────────────────── */
-
-export function TopBar({ state, status, onToggleOffline, view, setView }: { state: AppState | null; status: ServiceStatus | null; onToggleOffline: () => void; view?: "chart" | "lab"; setView?: (v: "chart" | "lab") => void }) {
-  const w = status?.weather;
-  const offline = status ? !status.online : false;
-  return (
-    <header className="topbar">
-      <div className="brand"><span className="mark">TACK</span><span className="sub">sailing tactician</span></div>
-      {setView && (
-        <div className="views">
-          <button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart</button>
-          <button className={view === "lab" ? "on" : ""} onClick={() => setView("lab")}>Strategy Lab</button>
-        </div>
-      )}
-      {state && (
-        <div className="voyage-label">
-          <b>{state.voyage.start.label.split("—")[0].trim()}</b> → <b>{state.voyage.destination.label}</b>
-        </div>
-      )}
-      <div className="spacer" />
-      {w && (
-        <span className={`pill ${!w.available || w.stale ? "warn" : ""}`} title={w.lastError ?? ""}>
-          {w.available ? <>FORECAST {fmtTime(w.meta!.fetchedAt)} · age {fmtAge(w.ageMinutes)}{w.stale ? " · STALE" : ""}</> : "NO FORECAST"}
-        </span>
-      )}
-      {status && (
-        <>
-          <span className={`pill ${status.online && status.model.configured && !status.model.lastError ? "" : "off"}`} title={status.model.lastError ?? status.model.provider}><span className="dot" />{status.model.model}</span>
-          <span className={`pill ${status.online && status.decision.configured && !status.decision.lastError ? "" : "off"}`} title={status.decision.lastError ?? status.decision.provider}><span className="dot" />{status.decision.model}</span>
-          <button className={`pill toggle ${offline ? "off" : ""}`} onClick={onToggleOffline} title="Simulate loss of connectivity">
-            <span className="dot" />{offline ? (status.forcedOffline ? "OFFLINE (simulated)" : "OFFLINE") : "ONLINE"}{status.pendingSync ? ` · ${status.pendingSync} to sync` : ""}
-          </button>
-        </>
-      )}
-      <span className="disclaimer">Prototype · not for navigation</span>
-    </header>
-  );
-}
 
 /* ───────────────────────── Vessel status ───────────────────────── */
 
@@ -162,10 +123,10 @@ export function RoutesPanel({ routing, selectedId, focusId, onFocus }: { routing
   return (
     <section className="panel">
       <h2>Candidate routes {routing && <span className="h-aside"><span className="tag est">estimates</span> {fmtTime(routing.computedAt, false)}</span>}</h2>
-      {!routing && <div className="empty">No routes yet — press “Plan route”.</div>}
+      {!routing && <div className="empty">No routes yet — ask TACK TACK to update the route.</div>}
       {routing?.routes.map((r) => (
         <div key={r.id} className={`route-row ${focusId === r.id ? "active" : ""} ${r.eligible ? "" : "ineligible"}`} onMouseEnter={() => onFocus(r.id)} onClick={() => onFocus(r.id)}>
-          <span className="sw" style={{ background: r.id === selectedId ? "#d9733a" : ROUTE_COLORS[r.id] }} />
+          <span className="sw" style={{ background: r.id === selectedId ? ACCENT : ROUTE_COLORS[r.id] }} />
           <div>
             <div className="nm"><span className="rid">{r.id}</span>{r.name}</div>
             <div className="sm">{fmtDur(r.metrics.durationHours)} · {r.metrics.distanceNm} nm · comfort {r.metrics.comfortIndex} · motor {r.metrics.motoringHours} h</div>
@@ -181,7 +142,7 @@ export function RoutesPanel({ routing, selectedId, focusId, onFocus }: { routing
               </div>
             )}
           </div>
-          {r.id === selectedId ? <span className="badge">SUBQ</span> : !r.eligible ? <span className="badge x">HARD</span> : null}
+          {r.id === selectedId ? <span className="badge">Recommended</span> : !r.eligible ? <span className="badge x">Excluded</span> : null}
         </div>
       ))}
       {routing?.warnings.map((w) => <div className="notice warn" key={w}>{w}</div>)}
@@ -201,10 +162,10 @@ function Ring({ value }: { value: number | null }) {
   const v = value ?? 0;
   return (
     <svg className="conf-ring" width="58" height="58" viewBox="0 0 58 58">
-      <circle cx="29" cy="29" r={r} fill="none" stroke="#e3d9c2" strokeWidth="5" />
-      {value != null && <circle cx="29" cy="29" r={r} fill="none" stroke={v < 0.6 ? "#b5482b" : "#d9733a"} strokeWidth="5" strokeDasharray={`${c * v} ${c}`} transform="rotate(-90 29 29)" strokeLinecap="round" />}
-      <text x="29" y="33" textAnchor="middle" style={{ font: "600 13px var(--mono)", fill: "#1b2a35" }}>{value != null ? `${Math.round(v * 100)}` : "—"}</text>
-      <text x="29" y="44" textAnchor="middle" style={{ font: "500 7px var(--mono)", fill: "#7d8789" }}>{value != null ? "%" : ""}</text>
+      <circle cx="29" cy="29" r={r} fill="none" stroke="var(--line)" strokeWidth="4" />
+      {value != null && <circle cx="29" cy="29" r={r} fill="none" stroke={v < 0.6 ? "var(--warn)" : ACCENT} strokeWidth="4" strokeDasharray={`${c * v} ${c}`} transform="rotate(-90 29 29)" strokeLinecap="round" />}
+      <text x="29" y="33" textAnchor="middle" style={{ font: "600 13px var(--mono)", fill: "var(--ink)" }}>{value != null ? `${Math.round(v * 100)}` : "—"}</text>
+      <text x="29" y="44" textAnchor="middle" style={{ font: "500 7px var(--mono)", fill: "var(--ink-3)" }}>{value != null ? "%" : ""}</text>
     </svg>
   );
 }
@@ -299,7 +260,7 @@ export function DecisionPanel(props: {
 
 /* ───────────────────────── Captain feedback (watch change) ───────────────────────── */
 
-function Feedback({ episodeId }: { episodeId: string }) {
+export function Feedback({ episodeId }: { episodeId: string }) {
   const [useful, setUseful] = useState<boolean | null>(null);
   const [comfort, setComfort] = useState<number | null>(null);
   const [sent, setSent] = useState<string | null>(null);
@@ -309,7 +270,7 @@ function Feedback({ episodeId }: { episodeId: string }) {
   };
   return (
     <div className="feedback">
-      <span>Watch change — was this recommendation useful?</span>
+      <span>Was the current route recommendation useful?</span>
       <button className={`btn sm ${useful === true ? "orange" : "ghost"}`} onClick={() => { setUseful(true); send(true, comfort); }}>yes</button>
       <button className={`btn sm ${useful === false ? "orange" : "ghost"}`} onClick={() => { setUseful(false); send(false, comfort); }}>no</button>
       <span style={{ marginLeft: 6 }}>comfort</span>

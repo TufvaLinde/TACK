@@ -1,11 +1,11 @@
 import type {
-  CandidateRoute, DecisionRecord, EffectiveObjectives, LearnedCorrection, LogEntry, Objectives, PointWeather,
+  CandidateRoute, DecisionRecord, EffectiveObjectives, ExtractionInfo, LearnedCorrection, LogEntry, ObjectiveChange, Objectives, Observations, PointWeather,
   PolarTable, RoutingResult, ServiceStatus, VesselConfig, Voyage,
 } from "../../shared/types";
 
 import type { DecisionEpisode, EvaluationResult, ImprovementRun, StrategyVersion } from "../../shared/intelligence";
 export type { DecisionEpisode, EvaluationResult, ImprovementRun, StrategyVersion };
-export type { CandidateRoute, DecisionRecord, EffectiveObjectives, LearnedCorrection, LogEntry, Objectives, PointWeather, RoutingResult, ServiceStatus, Voyage };
+export type { CandidateRoute, DecisionRecord, EffectiveObjectives, ExtractionInfo, LearnedCorrection, LogEntry, ObjectiveChange, Objectives, Observations, PointWeather, RoutingResult, ServiceStatus, Voyage };
 
 async function call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -39,7 +39,9 @@ export interface AppState {
 }
 export interface PlanStep { step: string; ok: boolean; detail: string; ms: number }
 export interface PlanResult { routing: RoutingResult | null; decision: DecisionRecord | null; steps: PlanStep[]; error: string | null }
-export interface AssistantResult { reply: string; actions: string[]; replan: boolean; via: string; modelError: string | null; entry: LogEntry | null }
+export type Workflow = "watch_change" | "update_route" | "open_logbook";
+export interface AssistantResult { reply: string; actions: string[]; replan: boolean; ui: Workflow | null; via: string; modelError: string | null; entry: LogEntry | null; change: ObjectiveChange | null }
+export interface Extracted { obs: Observations; info: ExtractionInfo; error?: string }
 export interface GridPoint extends PointWeather { lat: number; lon: number }
 
 export const api = {
@@ -52,6 +54,9 @@ export const api = {
   grid: (t: string) => call<{ available: boolean; time: string; points: GridPoint[] }>(`/weather/grid?t=${encodeURIComponent(t)}`),
   assistant: (message: string) => call<AssistantResult>("/assistant", { body: { message } }),
   logbook: (voyage: string) => call<LogEntry[]>(`/logbook?voyage=${encodeURIComponent(voyage)}`),
+  extract: (text: string) => call<Extracted>("/logbook/extract", { body: { text } }),
+  readImage: (image: string) => call<Extracted>("/logbook/image", { body: { image } }),
+  logObservation: (body: { observations: Partial<Observations>; source: string; method?: string; rawText?: string | null; notes?: string[] }) => call<LogEntry>("/logbook/form", { body }),
   importLog: (filename: string, content: string, year: number) => call<{ voyageId: string; imported: number; interpretation: string }>("/logbook/import", { body: { filename, content, year } }),
   polar: () => call<{ polar: PolarTable; correction: LearnedCorrection; curves: { tws: number; points: { twa: number; base: number; learned: number }[] }[] }>("/polar"),
   learning: (upTo?: string) => call<LearnedCorrection>(`/learning${upTo ? `?upTo=${encodeURIComponent(upTo)}` : ""}`),
@@ -120,4 +125,35 @@ export const compass = (deg: number | null | undefined) => {
   if (deg == null) return "";
   return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
 };
-export const ROUTE_COLORS: Record<string, string> = { R1: "#7fb7c9", R2: "#c9b98f", R3: "#9fc79a", R4: "#c79ac0", R5: "#d6d0c2", R6: "#8fa8d6" };
+// Restrained cartographic palette: alternatives are quiet slate tones; only the chosen route carries the accent.
+export const ROUTE_COLORS: Record<string, string> = { R1: "#6f8799", R2: "#8c9a8f", R3: "#9a8f7d", R4: "#857f9c", R5: "#93a0a8", R6: "#6f9393" };
+export const ACCENT = "#c2502e";
+
+export const fmtDay = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+export const fmtDate = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" }) : "—");
+export const fmtClock = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) : "—");
+export const fmtPos = (p: { lat: number; lon: number }) => `${fmtLat(p.lat)}  ${fmtLon(p.lon)}`;
+
+/** Great-circle distance in nautical miles. */
+export function distanceNm(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+  const r = Math.PI / 180;
+  const h = Math.sin(((b.lat - a.lat) * r) / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(((b.lon - a.lon) * r) / 2) ** 2;
+  return 2 * 3440.065 * Math.asin(Math.sqrt(h));
+}
+
+export function greeting(d = new Date()) {
+  const h = d.getHours();
+  return h < 5 ? "Good evening" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+/** Accepts 24.5, -45.2, "24 12.5N", "045°10.2'W", "24N". Returns decimal degrees or null. */
+export function parseCoordInput(s: string, axis: "lat" | "lon"): number | null {
+  const t = s.trim();
+  if (!t) return null;
+  const m = t.match(/^(-?\d{1,3}(?:\.\d+)?)(?:[°\s]+(\d{1,2}(?:\.\d+)?)\s*['’′]?)?\s*([NSEW])?$/i);
+  if (!m) return null;
+  let v = Number(m[1]) + (m[2] ? Number(m[2]) / 60 : 0);
+  if (m[3] && /[SW]/i.test(m[3])) v = -Math.abs(v);
+  const max = axis === "lat" ? 90 : 180;
+  return Math.abs(v) <= max ? +v.toFixed(5) : null;
+}

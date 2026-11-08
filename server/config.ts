@@ -13,11 +13,14 @@ export const config = {
     apiKey: process.env.META_API_KEY ?? "",
     baseUrl: process.env.META_BASE_URL ?? "https://api.meta.ai/v1",
     model: process.env.META_MODEL ?? "muse-spark-1.3",
+    // Image-capable model used to read chartplotter screenshots (defaults to the main model).
+    visionModel: process.env.META_VISION_MODEL ?? process.env.META_MODEL ?? "muse-spark-1.3",
   },
   // Optional on-board model: any OpenAI-compatible local server (llama.cpp, Ollama, vLLM).
   local: {
     baseUrl: process.env.LOCAL_MODEL_URL ?? "",
     model: process.env.LOCAL_MODEL ?? "llama3.1:8b",
+    visionModel: process.env.LOCAL_VISION_MODEL ?? process.env.LOCAL_MODEL ?? "llama3.2-vision",
   },
   modelProvider: (process.env.MODEL_PROVIDER ?? "meta") as "meta" | "local",
   subq: {

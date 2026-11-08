@@ -8,7 +8,7 @@ import {
 } from "./app.js";
 import { answer, answerOffline, interpret, interpretOffline } from "./assistant/assistant.js";
 import { config } from "./config.js";
-import { extractOffline, missingFields, sanitizeObservation } from "./logbook/extract.js";
+import { emptyObservations, extractFromImage, extractOffline, extractWithModel, missingFields, sanitizeObservation } from "./logbook/extract.js";
 import { importDelimited, importJson, inspectDelimited, interpretRemarks, voyageFromEntries } from "./logbook/importer.js";
 import { isOffline } from "./model/provider.js";
 import { net } from "./net.js";
@@ -16,7 +16,7 @@ import { applyChange, defaultObjectives, effective, normaliseChange, parsePrefer
 import { newId } from "./store/jsonStore.js";
 import { parsePolarCsv, parsePolarJson, polarSpeed } from "./vessel/polar.js";
 import { addFeedback, attachObservation, recordCaptainAction } from "./intelligence/recorder.js";
-import { intelligence } from "./intelligence/store.js";
+import { anonymiseLeg, intelligence } from "./intelligence/store.js";
 import { findSimilar } from "./intelligence/similar.js";
 import { strategies, validate } from "./strategies/runtime.js";
 import { dataset, buildDataset } from "./benchmark/dataset.js";
@@ -125,7 +125,7 @@ app.post("/api/decision/:id/action", wrap(async (req) => {
   if (d.episodeId) await recordCaptainAction(d.episodeId, d, routingDoc.get());
   const route = routingDoc.get()?.routes.find((r) => r.id === routeId);
   logbook.upsert({
-    id: newId("dec"), voyageId: LIVE_ID, kind: "decision", timestamp: d.captainAction.at!, timestampProvenance: "TACK clock", recordedAt: d.captainAction.at!,
+    id: newId("dec"), voyageId: LIVE_ID, kind: "decision", timestamp: d.captainAction.at!, timestampProvenance: "TACK TACK clock", recordedAt: d.captainAction.at!,
     source: "captain:action", rawText: null, observations: null, extraction: null, decision: d,
     message: action === "accepted" ? `Captain accepted ${routeId} ${route?.name ?? ""}.` : `Captain chose ${routeId} ${route?.name ?? ""} instead of the recommended ${d.selectedRouteId}.`,
   });
@@ -157,7 +157,7 @@ function recordPreference(text: string, change: ReturnType<typeof normaliseChang
   objectivesDoc.set(applyChange(objectivesDoc.get(), change, text));
   const now = new Date().toISOString();
   logbook.upsert({
-    id: newId("pref"), voyageId: LIVE_ID, kind: "preference", timestamp: now, timestampProvenance: "TACK clock", recordedAt: now,
+    id: newId("pref"), voyageId: LIVE_ID, kind: "preference", timestamp: now, timestampProvenance: "TACK TACK clock", recordedAt: now,
     source: "captain:nl", rawText: text, observations: null, extraction: { method: change.method, confidence: change.confidence, missingFields: [], notes: change.notes }, preference: { text, change },
   });
 }
@@ -168,13 +168,33 @@ app.get("/api/logbook", wrap((req) => {
   return logbook.all().filter((e) => voyageId === "all" || e.voyageId === voyageId).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }));
 app.post("/api/logbook/report", wrap(async (req) => ingestReport(String(req.body.text), { timestamp: req.body.timestamp })));
+// Watch change: extract without storing, so the captain can review and confirm the values first.
+app.post("/api/logbook/extract", wrap(async (req) => {
+  const text = String(req.body.text ?? "").trim();
+  if (!text) throw new Error("Nothing to read");
+  try { return await extractWithModel(text); }
+  catch (e) { const r = extractOffline(text); r.info.notes.push(`Language model unavailable: ${(e as Error).message}`); return r; }
+}));
+app.post("/api/logbook/image", wrap(async (req) => {
+  const image = String(req.body.image ?? "");
+  try { return await extractFromImage(image); }
+  catch (e) {
+    // Never guess values from an image we could not read.
+    return { obs: emptyObservations(), info: { method: "none", confidence: 0, missingFields: [], notes: [`The image could not be read: ${(e as Error).message}. Enter the values by hand instead.`] }, error: (e as Error).message };
+  }
+}));
+const FORM_SOURCES = new Set(["captain:form", "captain:watch-nl", "captain:watch-image", "captain:watch-form"]);
 app.post("/api/logbook/form", wrap(async (req) => {
   const now = new Date().toISOString();
-  const o = req.body.observations as Observations;
+  const o = { ...emptyObservations(), ...(req.body.observations as Observations) };
+  const source = FORM_SOURCES.has(req.body.source) ? req.body.source : "captain:form";
   const entry: LogEntry = {
     id: newId("log"), voyageId: LIVE_ID, kind: "observation", timestamp: req.body.timestamp ?? now, timestampProvenance: req.body.timestamp ? "captain-supplied time" : "time of submission",
-    recordedAt: now, source: "captain:form", rawText: req.body.rawText ?? null, observations: o,
-    extraction: { method: "structured form", confidence: 0.95, missingFields: missingFields(o), notes: [] },
+    recordedAt: now, source, rawText: req.body.rawText ?? null, observations: o,
+    extraction: {
+      method: req.body.method ? `${String(req.body.method)} · confirmed by captain` : "structured form",
+      confidence: 0.95, missingFields: missingFields(o), notes: Array.isArray(req.body.notes) ? req.body.notes.map(String).slice(0, 10) : [],
+    },
   };
   logbook.upsert(entry);
   await attachObservation(entry, voyages.get(LIVE_ID)!.destination);
@@ -234,7 +254,7 @@ app.post("/api/assistant", wrap(async (req) => {
   if (it.intents.includes("log_report")) {
     const res = modelOk && it.observation ? sanitizeObservation(it.observation, it.via) : extractOffline(message);
     entry = {
-      id: newId("log"), voyageId: LIVE_ID, kind: "observation", timestamp: now, timestampProvenance: "time of submission (TACK clock)", recordedAt: now,
+      id: newId("log"), voyageId: LIVE_ID, kind: "observation", timestamp: now, timestampProvenance: "time of submission (TACK TACK clock)", recordedAt: now,
       source: "captain:assistant", rawText: message, observations: res.obs, extraction: res.info,
     };
     logbook.upsert(entry);
@@ -303,8 +323,11 @@ app.post("/api/assistant", wrap(async (req) => {
       reply = answerOffline(it.question, logbook.all()) + "\n\n(Offline search over the local logbook — no language model reachable.)";
     }
   }
-  if (!reply && !actions.length) reply = "Noted.";
-  return { reply, actions, entry, change, replan, via, modelError: (it as any).error ?? null };
+  // 4. Workflows the interface should open
+  const ui = it.intents.includes("watch_change") ? "watch_change" : it.intents.includes("update_route") ? "update_route" : it.intents.includes("open_logbook") ? "open_logbook" : null;
+  if (ui === "update_route") replan = true;
+  if (!reply && !actions.length && !ui) reply = "Noted.";
+  return { reply, actions, entry, change, replan, ui, via, modelError: (it as any).error ?? null };
 }));
 
 /* ── self-improvement: episodes, strategies, benchmark, improvement runs ── */
@@ -315,7 +338,43 @@ app.post("/api/episodes/feedback", wrap(async (req) => {
   addSystemEntry(`Captain feedback on episode ${ep.id}: ${useful === true ? "useful" : useful === false ? "not useful" : "—"}${comfortRating ? `, comfort ${comfortRating}/5` : ""}${notes ? ` — “${notes}”` : ""}`);
   return ep;
 }));
-app.get("/api/similar", wrap(async (req) => findSimilar({ twsKn: Number(req.query.tws ?? 15), waveHeightM: req.query.hs != null ? Number(req.query.hs) : null }, getPolar(), Number(req.query.k ?? 5))));
+app.get("/api/similar", wrap(async (req) => {
+  const q = { twsKn: Number(req.query.tws ?? 15), waveHeightM: req.query.hs != null && req.query.hs !== "" ? Number(req.query.hs) : null, twaDeg: req.query.twa != null && req.query.twa !== "" ? Number(req.query.twa) : null };
+  return { query: q, store: intelligence.kind, results: await findSimilar(q, getPolar(), Math.min(20, Number(req.query.k ?? 8))) };
+}));
+
+/** Contribute an imported logbook's sailing legs to the shared pool (anonymised). */
+app.post("/api/intelligence/share-log", wrap(async (req) => {
+  const voyageId = String(req.body.voyageId ?? "hist_atlantic_csv");
+  const voyage = voyages.get(voyageId);
+  if (!voyage) throw new Error(`Unknown voyage ${voyageId}`);
+  const ds = dataset.current() ?? (await buildDataset(historicalEntries(), getPolar(), historicalVessel()));
+  const legs = ds.scenarios.filter((s) => s.provenance === "historical-log");
+  if (!legs.length) throw new Error("No usable sailing legs in the imported log");
+  const first = new Date(legs[0].t), last = new Date(legs.at(-1)!.t);
+  const fmt = (d: Date) => d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
+  const tag = String(req.body.voyageTag ?? `transatlantic crossing, ${fmt(first)}–${fmt(last)} ${last.getUTCFullYear()}`);
+  const written = await intelligence.shareExperiences(legs.map((l) => anonymiseLeg(l, tag)));
+  addSystemEntry(`Shared ${written} anonymised sailing legs from “${voyage.name}” to the ${intelligence.kind} pool (positions rounded to 0.5°, times to the hour, no remarks).`);
+  return { written, store: intelligence.kind, voyageTag: tag };
+}));
+app.get("/api/intelligence/pool", wrap(async () => {
+  const exps = await intelligence.listSharedExperiences({ limit: 5000 });
+  const vessels = new Map<string, { type: string; legs: number; tags: Set<string> }>();
+  for (const e of exps) {
+    const v = vessels.get(e.vessel.vesselId) ?? { type: e.vessel.type, legs: 0, tags: new Set<string>() };
+    v.legs++; v.tags.add(e.voyageTag);
+    vessels.set(e.vessel.vesselId, v);
+  }
+  return {
+    store: intelligence.kind,
+    experiences: exps.length,
+    sharedEpisodes: (await intelligence.listShared({ limit: 5000 })).length,
+    vessels: [...vessels.entries()].map(([id, v]) => ({ vesselId: id, type: v.type, legs: v.legs, voyages: [...v.tags] })),
+    // so the UI can draw the shared legs (rounded positions) on a chart
+    legs: exps.map((e) => ({ id: e.id, from: e.from, to: e.to, t: e.t, twsKn: e.weather.twsKn, waveHeightM: e.weather.waveHeightM, observedSogKn: e.observedSogKn })),
+  };
+}));
 
 app.get("/api/lab", wrap(async () => {
   const ds = dataset.current();
@@ -360,7 +419,7 @@ if (historicalEntries().length) buildDataset(historicalEntries(), getPolar(), hi
 scheduleImprovement();
 
 app.listen(config.port, () => {
-  console.log(`TACK server on http://localhost:${config.port}`);
+  console.log(`TACK TACK server on http://localhost:${config.port}`);
   console.log(`  model: ${config.meta.apiKey ? `Meta Model API (${config.meta.model})` : "META_API_KEY not set"} | decisions: ${config.subq.apiKey ? config.subq.model : "SUBQ_API_KEY not set"}`);
   void syncQueue;
   void decisions;

@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, fmtAge, fmtTime, type AppState, type GridPoint, type LogEntry, type PlanStep, type ServiceStatus } from "./api";
-import { Assistant } from "./components/Assistant";
+import { api, fmtAge, fmtTime, type AppState, type GridPoint, type LogEntry, type PlanResult, type PlanStep, type ServiceStatus } from "./api";
+import { friendlyReply, quickIntent, useConversation } from "./components/Conversation";
+import { Home } from "./components/Home";
 import { Logbook } from "./components/Logbook";
 import { MapView } from "./components/MapView";
-import { DecisionPanel, ObjectivesPanel, RoutesPanel, TopBar, VesselPanel } from "./components/Panels";
+import { DecisionPanel, RoutesPanel } from "./components/Panels";
+import { Drawer, Settings, TopBar, Wordmark, type View } from "./components/Shell";
 import { StrategyLab } from "./components/StrategyLab";
+import { WatchChange } from "./components/WatchChange";
 
 const hourFloor = (ms: number) => Math.floor(ms / 3_600_000) * 3_600_000;
+const viewFromHash = (): View => (location.hash === "#lab" ? "lab" : location.hash === "#logbook" ? "logbook" : "voyage");
 
 export function App() {
   const [state, setState] = useState<AppState | null>(null);
@@ -21,9 +25,15 @@ export function App() {
   const [logKey, setLogKey] = useState(0);
   const [replay, setReplay] = useState<{ voyageId: string; index: number } | null>(null);
   const [histEntries, setHistEntries] = useState<Record<string, LogEntry[]>>({});
+  const [poolLegs, setPoolLegs] = useState<NonNullable<Parameters<typeof MapView>[0]["poolLegs"]>>([]);
+  const [poolHighlight, setPoolHighlight] = useState<string[]>([]);
+  const [working, setWorking] = useState<string | null>(null);
+  const [overlay, setOverlay] = useState<null | "watch" | "settings" | "routes">(null);
   const wasOnline = useRef<boolean | null>(null);
-  const [view, setView] = useState<"chart" | "lab">(() => (location.hash === "#lab" ? "lab" : "chart"));
-  useEffect(() => { history.replaceState(null, "", view === "lab" ? "#lab" : "#"); }, [view]);
+  const convo = useConversation();
+  const [view, setView] = useState<View>(viewFromHash);
+  useEffect(() => { history.replaceState(null, "", view === "voyage" ? "#" : `#${view}`); }, [view]);
+  useEffect(() => { if (view !== "logbook") setReplay(null); }, [view]);
 
   const reload = useCallback(async () => {
     try {
@@ -36,6 +46,7 @@ export function App() {
     }
   }, []);
   useEffect(() => { reload(); }, [reload]);
+  const logged = useCallback(() => { reload(); setLogKey((k) => k + 1); }, [reload]);
 
   // Connectivity watch: when the link comes back, run the pending sync queue.
   useEffect(() => {
@@ -45,14 +56,13 @@ export function App() {
         setStatus(st);
         if (wasOnline.current === false && st.online && st.pendingSync > 0) {
           await api.sync();
-          await reload();
-          setLogKey((k) => k + 1);
+          logged();
         }
         wasOnline.current = st.online;
       } catch { /* server unreachable */ }
     }, 12_000);
     return () => clearInterval(t);
-  }, [reload]);
+  }, [logged]);
 
   // Forecast grid for the map at the selected hour.
   const weatherMeta = status?.weather.meta;
@@ -62,7 +72,7 @@ export function App() {
     return () => clearTimeout(t);
   }, [timeIso, weatherMeta?.id]);
 
-  const plan = useCallback(async (refresh?: boolean) => {
+  const plan = useCallback(async (refresh?: boolean): Promise<PlanResult | null> => {
     setPlanning(true);
     setPlanError(null);
     setSteps([]);
@@ -73,32 +83,73 @@ export function App() {
       setTimeIso(new Date(hourFloor(Date.now())).toISOString());
       await reload();
       setLogKey((k) => k + 1);
+      return r;
     } catch (e) {
       setPlanError((e as Error).message);
+      return null;
     } finally {
       setPlanning(false);
     }
   }, [reload]);
 
+  /** "Let's update the route": position → forecast → candidates → SubQ Snap → recommendation, told in the conversation. */
+  const updateRoute = useCallback(async (opts: { say?: string; refresh?: boolean } = {}) => {
+    if (planning) return;
+    setView("voyage");
+    if (opts.say) convo.push({ from: "captain", text: opts.say });
+    const id = convo.push({ from: "plan", status: "running" });
+    const r = await plan(opts.refresh);
+    convo.update(id, r && !r.error
+      ? { status: "done", steps: r.steps, decisionId: r.decision?.id ?? null }
+      : { status: "failed", steps: r?.steps, error: r?.error ?? "The route could not be updated." });
+  }, [planning, plan, convo]);
+
+  const say = useCallback(async (message: string) => {
+    if (working) return;
+    const quick = quickIntent(message);
+    if (quick === "update_route") return updateRoute({ say: message });
+    convo.push({ from: "captain", text: message });
+    if (quick === "watch_change") { convo.push({ from: "tack", text: "Of course. Let’s record the watch." }); setOverlay("watch"); return; }
+    if (quick === "open_logbook") { convo.push({ from: "tack", text: "Here’s the logbook." }); setView("logbook"); return; }
+    setWorking("Thinking…");
+    try {
+      const r = await api.assistant(message);
+      const f = friendlyReply(r);
+      const offer = r.replan && r.ui !== "update_route" && !!(r.change || r.entry?.observations?.position);
+      convo.push({ from: "tack", text: offer ? `${f.text}\n\nShall I update the route with this?` : f.text, details: f.details, via: r.via === "offline" ? "on-board parser (offline)" : r.via, offer: offer ? "replan" : null });
+      logged();
+      setWorking(null);
+      if (r.ui === "watch_change") setOverlay("watch");
+      else if (r.ui === "open_logbook") setView("logbook");
+      else if (r.ui === "update_route") await updateRoute();
+    } catch (e) {
+      convo.push({ from: "tack", text: `I couldn’t process that: ${(e as Error).message}` });
+    } finally {
+      setWorking(null);
+    }
+  }, [working, convo, updateRoute, logged]);
+
+  const accept = useCallback(async (routeId: string) => {
+    if (!state?.decision) return;
+    await api.decisionAction(state.decision.id, routeId);
+    logged();
+  }, [state?.decision, logged]);
+
   const toggleOffline = async () => {
     const st = await api.setOffline(!(status?.forcedOffline ?? false));
     setStatus(st);
-    if (!st.forcedOffline && st.online && st.pendingSync > 0) {
-      await api.sync();
-      await reload();
-    }
+    if (!st.forcedOffline && st.online && st.pendingSync > 0) await api.sync();
     wasOnline.current = st.online;
-    setLogKey((k) => k + 1);
+    logged();
   };
 
   const replayEntries = useMemo(() => (replay ? (histEntries[replay.voyageId] ?? []).filter((e) => e.kind === "observation") : []), [replay, histEntries]);
-  const replayEntry = replay ? replayEntries[replay.index] ?? null : null;
 
   if (!state) {
     return (
-      <div className="app">
-        <TopBar state={null} status={status} onToggleOffline={() => {}} />
-        <div style={{ color: "var(--cream)", padding: 40, fontFamily: "var(--mono)" }}>{loadError ? `Cannot reach the TACK server: ${loadError}` : <><span className="spin" /> Loading vessel, logbook and forecast…</>}</div>
+      <div className="boot">
+        <Wordmark />
+        <p>{loadError ? `Cannot reach the TACK TACK server: ${loadError}` : "Reading the boat, the logbook and the forecast…"}</p>
       </div>
     );
   }
@@ -111,58 +162,84 @@ export function App() {
 
   return (
     <div className="app">
-      <TopBar state={state} status={status} onToggleOffline={toggleOffline} view={view} setView={setView} />
-      {view === "lab" ? <div className="main" style={{ gridTemplateColumns: "1fr" }}><StrategyLab /></div> : (
-      <div className="main">
-        <aside className="col left">
-          <VesselPanel state={state} replayEntry={replayEntry} />
-          <ObjectivesPanel key={state.objectives.updatedAt} state={state} onChanged={reload} />
-          <RoutesPanel routing={routing} selectedId={selectedId} focusId={focusId} onFocus={setFocusId} />
-        </aside>
-        <main className="center">
-          <MapView
-            routing={routing}
-            selectedId={selectedId}
-            focusId={focusId}
-            onFocus={setFocusId}
-            vessel={{ lat: state.vesselState.position.lat, lon: state.vesselState.position.lon, heading: (state.vesselState.observed.headingDeg?.value as number) ?? null }}
-            destination={state.voyage.destination}
-            timeIso={timeIso}
-            setTimeIso={setTimeIso}
-            timeRange={timeRange}
-            grid={replay ? [] : grid}
-            weatherInfo={meta ? `Open-Meteo · retrieved ${fmtTime(meta.fetchedAt)} (${fmtAge(status?.weather.ageMinutes)} ago)${status?.weather.stale ? " · STALE" : ""}` : "no forecast"}
-            replay={replay ? { entries: replayEntries, index: replay.index } : null}
-            onPick={async (kind, pt) => {
-              await api.voyage(kind === "start"
-                ? { start: { ...pt, label: `Start ${pt.lat.toFixed(2)}, ${pt.lon.toFixed(2)} (set on chart)` } }
-                : { destination: { ...pt, label: `Destination ${pt.lat.toFixed(2)}, ${pt.lon.toFixed(2)} (set on chart)` } });
-              await reload();
-            }}
-          />
-          <Logbook
-            voyages={state.voyages}
-            refreshKey={logKey}
-            replay={replay}
-            setReplay={setReplay}
-            onEntries={(id, e) => setHistEntries((h) => ({ ...h, [id]: e }))}
-            onImported={() => { reload(); setLogKey((k) => k + 1); }}
-          />
-        </main>
-        <aside className="col right">
+      <TopBar status={status} view={view} setView={setView} onSettings={() => setOverlay("settings")} />
+      {view === "lab" ? <div className="lab-wrap"><StrategyLab /></div> : (
+        <div className={`main v-${view}`}>
+          <section className="pane">
+            {view === "voyage" ? (
+              <Home
+                state={state} status={status} convo={convo} working={working} planning={planning}
+                onSay={say}
+                onUpdateRoute={() => updateRoute({ say: "Let’s update the route." })}
+                onWatchChange={() => setOverlay("watch")}
+                onLogbook={() => setView("logbook")}
+                onAccept={accept}
+                onFocus={setFocusId}
+                onRouteDetails={() => setOverlay("routes")}
+                onPriorities={() => setOverlay("settings")}
+              />
+            ) : (
+              <Logbook
+                voyages={state.voyages}
+                refreshKey={logKey}
+                replay={replay}
+                setReplay={setReplay}
+                onEntries={(id, e) => setHistEntries((h) => ({ ...h, [id]: e }))}
+                onImported={logged}
+                fleetDefaults={{ twsKn: state.vesselState.forecastHere?.twsKn ?? null, waveHeightM: state.vesselState.forecastHere?.waveHeightM ?? null }}
+                onPoolLegs={setPoolLegs}
+                onPoolHighlight={setPoolHighlight}
+              />
+            )}
+          </section>
+          <section className="chart">
+            <MapView
+              routing={routing}
+              selectedId={selectedId}
+              focusId={focusId}
+              onFocus={setFocusId}
+              vessel={{ lat: state.vesselState.position.lat, lon: state.vesselState.position.lon, heading: (state.vesselState.observed.headingDeg?.value as number) ?? null }}
+              destination={state.voyage.destination}
+              timeIso={timeIso}
+              setTimeIso={setTimeIso}
+              timeRange={timeRange}
+              grid={replay ? [] : grid}
+              weatherInfo={meta ? `Open-Meteo · retrieved ${fmtTime(meta.fetchedAt)} (${fmtAge(status?.weather.ageMinutes)} ago)${status?.weather.stale ? " · stale" : ""}` : "no forecast"}
+              replay={replay ? { entries: replayEntries, index: replay.index } : null}
+              poolLegs={view === "logbook" ? poolLegs : []}
+              poolHighlight={poolHighlight}
+              onPick={async (kind, pt) => {
+                await api.voyage(kind === "start"
+                  ? { start: { ...pt, label: `Start ${pt.lat.toFixed(2)}, ${pt.lon.toFixed(2)} (set on chart)` } }
+                  : { destination: { ...pt, label: `Destination ${pt.lat.toFixed(2)}, ${pt.lon.toFixed(2)} (set on chart)` } });
+                await reload();
+              }}
+            />
+          </section>
+        </div>
+      )}
+
+      {overlay === "watch" && (
+        <WatchChange state={state} onClose={() => setOverlay(null)}
+          onLogged={(e) => { logged(); convo.push({ from: "tack", text: `Watch change logged at ${fmtTime(e.timestamp)}.` }); }}
+          onUpdateRoute={() => updateRoute()} />
+      )}
+      {overlay === "settings" && (
+        <Drawer title="Settings" onClose={() => setOverlay(null)}>
+          <Settings state={state} status={status} onChanged={reload} onToggleOffline={toggleOffline} />
+        </Drawer>
+      )}
+      {overlay === "routes" && (
+        <Drawer title="Routing details" wide onClose={() => setOverlay(null)}>
           <DecisionPanel
-            decision={d}
-            routing={routing}
-            planning={planning}
-            steps={steps}
-            planError={planError}
-            onPlan={plan}
+            decision={d} routing={routing} planning={planning} steps={steps} planError={planError}
+            onPlan={(refresh) => { setOverlay(null); updateRoute({ refresh }); }}
             onFocus={setFocusId}
-            onAction={async (routeId) => { await api.decisionAction(d!.id, routeId); await reload(); setLogKey((k) => k + 1); }}
+            onAction={accept}
           />
-          <Assistant busy={planning} onReplan={() => plan()} onLogged={() => { reload(); setLogKey((k) => k + 1); }} />
-        </aside>
-      </div>)}
+          <RoutesPanel routing={routing} selectedId={selectedId} focusId={focusId} onFocus={setFocusId} />
+        </Drawer>
+      )}
     </div>
   );
 }

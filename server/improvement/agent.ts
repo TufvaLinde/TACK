@@ -83,7 +83,7 @@ const PROPOSAL_SCHEMA = {
   },
 };
 
-const RULES = `You are the improvement agent of TACK, an onboard sailing routing system. You modify an isolated routing-strategy module.
+const RULES = `You are the improvement agent of TACK TACK, an onboard sailing routing system. You modify an isolated routing-strategy module.
 Module contract (JavaScript, evaluated in a sandbox):
 - The source defines \`const strategy = { speedFactor(c), uncertaintyFactor(c), adjustWeights(w, ctx), scoreRoute(c, w), context: {...} };\` and ends with the line \`strategy;\`
 - speedFactor(c): c = { twsKn, twaDeg (0..180, angle sailed), waveHeightM (number|null), wavePeriodS (number|null), waveRelDeg (0..180|null), reefed (bool) }. Returns a multiplier on polar boat speed. Must stay within [0.3, 1.3] and handle nulls.

@@ -1,9 +1,9 @@
 {
-  "name": "tack",
+  "name": "tack-tack",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "TACK — adaptive AI sailing tactician (prototype, not for navigation)",
+  "description": "TACK TACK — an intelligent companion for offshore sailing (prototype, not for navigation)",
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,yellow \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch --env-file-if-exists=.env server/index.ts",
