@@ -10,6 +10,7 @@
     "dev:client": "vite",
     "build": "vite build",
     "start": "tsx --env-file-if-exists=.env server/index.ts",
+    "agent": "tsx --env-file-if-exists=.env server/agent/cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test server/tack.test.ts"
   },

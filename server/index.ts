@@ -407,6 +407,24 @@ app.post("/api/lab/rollback", wrap((req) => {
   return { production: strategies.production().meta.version };
 }));
 
+/* ── autonomous engineering agent ── */
+app.post("/api/agent/run", wrap(async (req) => {
+  const { runAgent } = await import("./agent/autonomous.js");
+  const { buildBrief, DEFAULT_GOAL } = await import("./agent/brief.js");
+  const brief = await buildBrief();
+  void runAgent(String(req.body?.goal ?? DEFAULT_GOAL), brief);
+  return { started: true, brief };
+}));
+app.get("/api/agent/runs", wrap(async () => (await import("./agent/autonomous.js")).agentRuns.all().slice(-10).reverse()));
+// Nightly autonomous run (AGENT_INTERVAL_HOURS, default 24; 0 disables).
+if (Number(process.env.AGENT_INTERVAL_HOURS ?? 24) > 0) {
+  setInterval(async () => {
+    const { runAgent } = await import("./agent/autonomous.js");
+    const { buildBrief, DEFAULT_GOAL } = await import("./agent/brief.js");
+    if (await net.isOnline()) await runAgent(DEFAULT_GOAL, await buildBrief()).catch(() => {});
+  }, Number(process.env.AGENT_INTERVAL_HOURS ?? 24) * 3_600_000).unref();
+}
+
 /* ── static client (production build) ── */
 const dist = path.join(config.root, "dist");
 if (fs.existsSync(dist)) {
