@@ -3,7 +3,7 @@
   "type": "Cruising yacht (type not yet specified)",
   "lengthFt": null,
   "notes": "Polar is a SAMPLE for a generic ~45 ft cruising yacht, not this vessel's measured polar. Load the real polar (CSV/JSON) when available.",
-  "engine": { "cruiseSpeedKn": 5.5, "fuelBurnLph": null, "fuelCapacityL": null },
+  "engine": { "cruiseSpeedKn": 5.5, "fuelBurnLph": null, "fuelCapacityL": null, "fuelReserveL": 20 },
   "operationalLimits": { "maxTwsKn": 35, "maxWaveM": 5 },
   "polarFile": "polars/sample-cruiser-45.csv"
 }

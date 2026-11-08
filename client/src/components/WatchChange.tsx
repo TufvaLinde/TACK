@@ -7,9 +7,9 @@ import { Feedback } from "./Panels";
    stored, and fields that were not found stay empty — nothing is filled in by guesswork. */
 
 type Mode = "describe" | "instruments" | "photo";
-type Vals = Record<"lat" | "lon" | "heading" | "sog" | "stw" | "tws" | "twd" | "awa" | "sea" | "main" | "reef" | "headsail" | "engine" | "crew" | "remarks", string>;
+type Vals = Record<"lat" | "lon" | "heading" | "sog" | "stw" | "tws" | "twd" | "awa" | "sea" | "main" | "reef" | "headsail" | "engine" | "crew" | "remarks" | "fuel" | "burn", string>;
 
-const EMPTY: Vals = { lat: "", lon: "", heading: "", sog: "", stw: "", tws: "", twd: "", awa: "", sea: "", main: "", reef: "", headsail: "", engine: "", crew: "", remarks: "" };
+const EMPTY: Vals = { lat: "", lon: "", heading: "", sog: "", stw: "", tws: "", twd: "", awa: "", sea: "", main: "", reef: "", headsail: "", engine: "", crew: "", remarks: "", fuel: "", burn: "" };
 
 const fromObs = (o: Observations): Vals => ({
   lat: o.position ? fmtLat(o.position.lat) : "",
@@ -26,6 +26,8 @@ const fromObs = (o: Observations): Vals => ({
   headsail: o.sailPlan?.headsail && o.sailPlan.headsail !== "unknown" ? o.sailPlan.headsail : "",
   engine: o.sailPlan?.engine == null ? "" : o.sailPlan.engine ? "on" : "off",
   crew: o.crewCondition ?? "",
+  fuel: o.fuelLitres?.toString() ?? "",
+  burn: o.fuelBurnLph?.toString() ?? "",
   remarks: o.remarks ?? "",
 });
 
@@ -59,6 +61,8 @@ function toObs(v: Vals): { obs: Partial<Observations>; problems: string[] } {
       engine: v.engine === "" ? null : v.engine === "on", reefLevel: v.reef ? Number(v.reef) : null, raw: null,
     } : null,
     crewCondition: v.crew.trim() || null,
+    fuelLitres: num(v.fuel, "Fuel on board", 0, 20000),
+    fuelBurnLph: num(v.burn, "Fuel burn", 0, 200),
     remarks: v.remarks.trim() || null,
   };
   return { obs, problems };
@@ -290,6 +294,10 @@ function ReadingsForm({ vals, setVals, hint, found }: { vals: Vals; setVals: (v:
           {f("reef", "Reef", "", "", "decimal")}
           {sel("headsail", "Headsail", sail)}
           {sel("engine", "Engine", [["off", "Off"], ["on", "Running"]])}
+        </div>
+        <div className="row3" style={{ marginTop: 8 }}>
+          {f("fuel", "Fuel on board", "L", hint("fuelLitres", " L"))}
+          {f("burn", "Engine burn", "L/h", hint("fuelBurnLph", " L/h"))}
         </div>
       </div>
       <div className="group">

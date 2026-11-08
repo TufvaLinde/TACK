@@ -77,6 +77,8 @@ function readings(e: LogEntry): [string, string][] {
     out.push(["Sails", sp.raw ?? ([sp.main !== "unknown" && `main ${sp.main}${sp.reefLevel ? ` (reef ${sp.reefLevel})` : ""}`, sp.headsail !== "unknown" && `headsail ${sp.headsail}`].filter(Boolean).join(", ") || "—")]);
     if (sp.engine != null) out.push(["Engine", sp.engine ? "running" : "off"]);
   }
+  if (o.fuelLitres != null) out.push(["Fuel", `${o.fuelLitres} L`]);
+  if (o.fuelBurnLph != null) out.push(["Burn", `${o.fuelBurnLph} L/h`]);
   if (o.crewCondition) out.push(["Crew", o.crewCondition]);
   if (o.tanks?.diesel) out.push(["Diesel", o.tanks.diesel]);
   if (o.tanks?.water) out.push(["Water", o.tanks.water]);

@@ -106,8 +106,9 @@ function Glance({ state, onPriorities }: { state: AppState; onPriorities: () => 
     ob.headingDeg && `heading ${ob.headingDeg.value}°`,
     ob.sogKn && `${ob.sogKn.value} kn over ground`,
     sails,
+    ob.fuelLitres && `${ob.fuelLitres.value} L fuel${ob.fuelBurnLph ? ` (burning ${ob.fuelBurnLph.value} L/h)` : ""}`,
   ].filter(Boolean).join(" · ");
-  const latestBoat = [ob.headingDeg, ob.sogKn, ob.sailPlan].filter(Boolean).map((o) => o!.at).sort().at(-1);
+  const latestBoat = [ob.headingDeg, ob.sogKn, ob.sailPlan, ob.fuelLitres].filter(Boolean).map((o) => o!.at).sort().at(-1);
   const temp = state.effectiveObjectives.activeTemporary.at(-1);
 
   return (

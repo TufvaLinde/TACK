@@ -17,6 +17,7 @@ export interface VesselConfig {
     cruiseSpeedKn: number; // motoring speed in calm water
     fuelBurnLph: number | null; // null → fuel consumption cannot be estimated
     fuelCapacityL: number | null;
+    fuelReserveL?: number | null; // never planned below this
   };
   operationalLimits: {
     maxTwsKn: number; // vessel/crew operational wind limit (hard)
@@ -106,6 +107,8 @@ export interface Observations {
   sailPlan: SailPlan | null;
   crewCondition: string | null;
   tripLogNm: number | null;
+  fuelLitres?: number | null; // fuel on board, litres (observed)
+  fuelBurnLph?: number | null; // engine-reported burn rate, L/h (observed)
   tanks: { diesel: string | null; water: string | null } | null; // raw gauge strings
   remarks: string | null;
 }
@@ -217,7 +220,8 @@ export interface RouteMetrics {
   meanSogKn: number;
   meanBspKn: number;
   motoringHours: number;
-  fuelLitres: number | null;
+  fuelLitres: number | null; // fuel burned on this route
+  fuel?: { startL: number | null; burnLph: number | null; reserveL: number; remainingL: number | null; engineUnavailableHours: number; source: string };
   sailingHoursPct: number;
   goodSailingPct: number; // hours with 10–20 kn, reaching/running, waves < 2.5 m
   wind: { meanKn: number; maxKn: number; maxGustKn: number; hoursAbove20: number; hoursAbove25: number };

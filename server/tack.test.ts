@@ -63,3 +63,9 @@ test("chartplotter image reader rejects non-images before calling a model", asyn
   const { extractFromImage } = await import("./logbook/extract.js");
   await assert.rejects(extractFromImage("hello"), /PNG, JPEG or WebP/);
 });
+
+test("offline parser reads fuel on board and burn rate", () => {
+  const r = extractOffline("Motoring, 140 litres of diesel left, burning 3.2 l/h.");
+  assert.equal(r.obs.fuelLitres, 140);
+  assert.equal(r.obs.fuelBurnLph, 3.2);
+});

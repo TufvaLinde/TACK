@@ -52,12 +52,24 @@ function contrast(r: CandidateRoute, base: CandidateRoute) {
   if (r.metrics.wind.maxKn - base.metrics.wind.maxKn >= 3) out.push(`up to ${r.metrics.wind.maxKn} kn`);
   const dm = r.metrics.motoringHours - base.metrics.motoringHours;
   if (Math.abs(dm) >= 2) out.push(`${Math.round(Math.abs(dm))} h ${dm > 0 ? "more" : "less"} motoring`);
+  const fr = r.metrics.fuel?.remainingL, fb = base.metrics.fuel?.remainingL;
+  if (fr != null && fb != null && Math.abs(fr - fb) >= 5) out.push(`${fr} L fuel left`);
+  if ((r.metrics.fuel?.engineUnavailableHours ?? 0) >= 1) out.push("runs down to fuel reserve");
   return out.join(" · ") || "similar to the recommendation";
+}
+
+function fuelNote(r: CandidateRoute) {
+  const f = r.metrics.fuel;
+  if (!f || f.startL == null) return r.metrics.motoringHours >= 1 ? "fuel not checked" : "";
+  const out = [f.remainingL != null ? `${f.remainingL} L fuel left at arrival` : ""];
+  if (f.engineUnavailableHours >= 1) out.push(`${Math.round(f.engineUnavailableHours)} h sailing slowly at fuel reserve`);
+  return out.filter(Boolean).join(", ");
 }
 
 function conditions(r: CandidateRoute) {
   const m = r.metrics;
-  return `Wind up to ${m.wind.maxKn} kn${m.waves.maxM != null ? `, waves up to ${m.waves.maxM} m` : ""}${m.motoringHours >= 1 ? `, ${Math.round(m.motoringHours)} h motoring` : ""}`;
+  const fuel = fuelNote(r);
+  return `Wind up to ${m.wind.maxKn} kn${m.waves.maxM != null ? `, waves up to ${m.waves.maxM} m` : ""}${m.motoringHours >= 1 ? `, ${Math.round(m.motoringHours)} h motoring` : ""}${fuel ? ` · ${fuel}` : ""}`;
 }
 
 interface Option { key: string; label: string; route: CandidateRoute; also: string[] }
@@ -165,6 +177,7 @@ function Why({ decision: d, route: r, onDetails }: { decision: DecisionRecord; r
         <dt>Decided by</dt><dd>{d.engine}{d.confidence != null ? `, ${Math.round(d.confidence * 100)}% confident` : ""}</dd>
         <dt>Comfort</dt><dd>{m.comfortIndex}/10 overall, {m.next12h.comfortIndex}/10 over the next 12 h</dd>
         <dt>Sailing</dt><dd>{m.goodSailingPct}% good sailing · {m.upwindHours} h upwind · {m.motoringHours} h motoring</dd>
+        <dt>Fuel</dt><dd>{m.fuel?.startL != null ? `${m.fuel.startL} L on board (${m.fuel.source}) · ${m.fuelLitres ?? "?"} L used at ${m.fuel.burnLph ?? "?"} L/h · ${m.fuel.remainingL ?? "?"} L at arrival · reserve ${m.fuel.reserveL} L${m.fuel.engineUnavailableHours ? ` · engine held back ${m.fuel.engineUnavailableHours} h at reserve` : ""}` : "Fuel on board not reported — the engine is assumed available throughout."}</dd>
         <dt>Forecast</dt><dd>Open-Meteo, retrieved {fmtTime(d.weatherFetchedAt)}{m.hoursBeyondForecast > 0 ? ` · last ${m.hoursBeyondForecast} h beyond the forecast` : ""}</dd>
         {d.excludedRoutes.length > 0 && <><dt>Ruled out</dt><dd>{d.excludedRoutes.map((x) => `${x.id} (${x.reasons.join("; ")})`).join(" · ")}</dd></>}
       </dl>

@@ -97,6 +97,8 @@ function routeSummary(r: CandidateRoute, includeNext12h = true) {
     meanSpeedOverGroundKn: m.meanSogKn,
     motoringHours: m.motoringHours,
     fuelLitres: m.fuelLitres ?? "unknown (no engine fuel-burn data)",
+    fuelRemainingAtArrivalL: m.fuel?.remainingL ?? "unknown (fuel on board not reported)",
+    hoursWantedEngineButFuelAtReserve: m.fuel?.engineUnavailableHours ?? 0,
     sailingTimePct: m.sailingHoursPct,
     goodSailingConditionsPct: m.goodSailingPct,
     upwindHours: m.upwindHours,

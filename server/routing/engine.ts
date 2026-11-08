@@ -30,6 +30,8 @@ export interface RoutingContext {
   weatherStale: boolean;
   strategy: StrategyModule; // versioned routing strategy (production unless benchmarking)
   strategyVersion: string;
+  /** Latest fuel state; null = unknown, so motoring is not limited and the route is marked "fuel not checked". */
+  fuel?: { startL: number | null; burnLph: number | null; source: string } | null;
 }
 
 const STRATEGY: Record<SailingStrategy, { reefAboveKn: number; motorBelowKn: number; trimFactor: number; minUpwindTwa: number; label: string }> = {
@@ -98,6 +100,10 @@ export function simulate(ctx: RoutingContext, waypoints: LatLon[], strategy: Sai
   let reached = false;
   let hours = 0;
   const s = STRATEGY[strategy];
+  const burn = ctx.fuel?.burnLph ?? ctx.vessel.engine.fuelBurnLph ?? null;
+  const reserve = ctx.vessel.engine.fuelReserveL ?? 0;
+  let fuelL = ctx.fuel?.startL ?? null; // tracked only when known
+  let engineOut = 0;
 
   while (hours < MAX_HOURS) {
     while (k < waypoints.length - 1 && distanceNm(pos, waypoints[k]) < 12) k++;
@@ -112,7 +118,9 @@ export function simulate(ctx: RoutingContext, waypoints: LatLon[], strategy: Sai
     const leadHours = (tMs - ctx.departureMs) / 3_600_000;
     let vmc = eff.vmc * clamp(ctx.strategy.uncertaintyFactor({ leadHours, beyondForecast: wx.beyondForecast }), 0.5, 1.05);
     let motoring = false;
-    if (vmc < s.motorBelowKn) {
+    const fuelOk = fuelL == null || burn == null || fuelL - burn * dt > reserve;
+    if (vmc < s.motorBelowKn && !fuelOk) engineOut += dt; // would motor, but the tank is at reserve: keep sailing
+    if (vmc < s.motorBelowKn && fuelOk) {
       motoring = true;
       const seaPenalty = wx.waveHeightM != null && wx.waveHeightM > 2 && courseTwa < 70 ? 0.85 : 1;
       vmc = Math.max(vmc, ctx.vessel.engine.cruiseSpeedKn * seaPenalty);
@@ -143,7 +151,7 @@ export function simulate(ctx: RoutingContext, waypoints: LatLon[], strategy: Sai
     acc.bsp.push(vmc);
     acc.gust = Math.max(acc.gust, wx.gustKn ?? 0);
     if (wx.waveHeightM != null) acc.waves.push(wx.waveHeightM);
-    if (motoring) acc.motor += dt * frac;
+    if (motoring) { acc.motor += dt * frac; if (fuelL != null && burn != null) fuelL -= burn * dt * frac; }
     if (!motoring && eff.manoeuvre === "tacking") acc.upwind += dt * frac;
     if (!motoring && tws >= 10 && tws <= 20 && eff.sailedTwa >= 60 && eff.sailedTwa <= 150 && (wx.waveHeightM ?? 0) < 2.5) acc.good += dt * frac;
     if (wx.beyondForecast) acc.beyond += dt * frac;
@@ -165,7 +173,8 @@ export function simulate(ctx: RoutingContext, waypoints: LatLon[], strategy: Sai
     meanSogKn: r1(acc.dist / Math.max(hours, 0.1)),
     meanBspKn: r1(mean(acc.bsp)),
     motoringHours: r1(acc.motor),
-    fuelLitres: ctx.vessel.engine.fuelBurnLph != null ? Math.round(acc.motor * ctx.vessel.engine.fuelBurnLph) : null,
+    fuelLitres: burn != null ? Math.round(acc.motor * burn) : null,
+    fuel: { startL: ctx.fuel?.startL ?? null, burnLph: burn, reserveL: reserve, remainingL: fuelL != null ? Math.round(fuelL) : null, engineUnavailableHours: r1(engineOut), source: ctx.fuel?.source ?? "not reported" },
     sailingHoursPct: Math.round(100 * (1 - acc.motor / Math.max(hours, 0.1))),
     goodSailingPct: Math.round((100 * acc.good) / Math.max(hours, 0.1)),
     wind: {
@@ -305,6 +314,7 @@ function constraintCheck(ctx: RoutingContext, track: RouteTrackPoint[], metrics:
     if (track.some((p) => distanceNm(p, a) < a.radiusNm)) v.push(`Passes through restricted area "${a.name}"`);
   }
   if (metrics.landCrossing) v.push("Route geometry crosses land");
+  if (metrics.fuel && metrics.fuel.remainingL != null && metrics.fuel.remainingL < metrics.fuel.reserveL - 1) v.push(`Fuel would drop below the ${metrics.fuel.reserveL} L reserve`);
   return v;
 }
 
@@ -349,6 +359,8 @@ export function computeRoutes(ctx: RoutingContext, start: LatLon, dest: LatLon):
 
   if (routes.some((r) => r.metrics.hoursBeyondForecast > 0))
     warnings.push("Part of the passage extends beyond the forecast horizon; conditions there are held at the last forecast hour and are low-confidence.");
+  if (!ctx.fuel || ctx.fuel.startL == null) warnings.push("Fuel on board not reported — routes assume the engine is always available. Log fuel at the next watch change.");
+  else if (ctx.fuel.burnLph == null && ctx.vessel.engine.fuelBurnLph == null) warnings.push("Engine burn rate not reported — fuel use cannot be estimated. Log L/h at the next watch change.");
   if (ctx.weatherStale) warnings.push("Weather forecast is stale — routing uses an old forecast.");
   void vmgAngles;
 

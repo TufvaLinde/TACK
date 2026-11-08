@@ -5,7 +5,7 @@ import { model } from "../model/provider.js";
 // Rule: never invent measurements — anything not stated is null and listed as missing.
 
 export const KEY_FIELDS = ["position", "headingDeg", "sogKn", "stwKn", "twsKn", "twdDeg", "sailPlan", "crewCondition", "seaState"] as const;
-const FIELD_ORDER = ["position", "headingDeg", "cogDeg", "sogKn", "stwKn", "twsKn", "twdDeg", "awaDeg", "windReference", "gustKn", "pressureHpa", "waveHeightM", "seaState", "sailPlan", "crewCondition", "remarks", "confidence", "notes"];
+const FIELD_ORDER = ["position", "headingDeg", "cogDeg", "sogKn", "stwKn", "twsKn", "twdDeg", "awaDeg", "windReference", "gustKn", "pressureHpa", "waveHeightM", "seaState", "sailPlan", "crewCondition", "fuelLitres", "fuelBurnLph", "remarks", "confidence", "notes"];
 
 const nullable = (type: string | string[], extra: Record<string, unknown> = {}) => ({ type: [...(Array.isArray(type) ? type : [type]), "null"], ...extra });
 
@@ -44,6 +44,8 @@ export const OBS_SCHEMA = {
       ],
     },
     crewCondition: nullable("string"),
+    fuelLitres: nullable("number", { description: "fuel on board in litres (convert % only if tank size is stated)" }),
+    fuelBurnLph: nullable("number", { description: "engine fuel consumption, litres per hour" }),
     remarks: nullable("string", { description: "anything else noteworthy, in the captain's words" }),
     confidence: { type: "number", description: "0..1 confidence in the extraction" },
     notes: { type: "array", items: { type: "string" }, description: "ambiguities or assumptions" },
@@ -67,7 +69,7 @@ export function emptyObservations(): Observations {
   return {
     position: null, headingDeg: null, cogDeg: null, sogKn: null, stwKn: null, twsKn: null, twdDeg: null,
     awaDeg: null, windReference: null, gustKn: null, pressureHpa: null, waveHeightM: null, seaState: null, sailPlan: null,
-    crewCondition: null, tripLogNm: null, tanks: null, remarks: null,
+    crewCondition: null, fuelLitres: null, fuelBurnLph: null, tripLogNm: null, tanks: null, remarks: null,
   };
 }
 
@@ -127,6 +129,8 @@ export function sanitizeObservation(data: any, via: string): { obs: Observations
   check("cogDeg", (v) => v >= 0 && v <= 360);
   check("twdDeg", (v) => v >= 0 && v <= 360);
   check("awaDeg", (v) => v >= 0 && v <= 180);
+  check("fuelLitres", (v) => v >= 0 && v < 20000);
+  check("fuelBurnLph", (v) => v >= 0 && v < 200);
   check("sogKn", (v) => v >= 0 && v < 40);
   check("stwKn", (v) => v >= 0 && v < 40);
   check("twsKn", (v) => v >= 0 && v < 120);
@@ -198,6 +202,8 @@ export function extractOffline(text: string): { obs: Observations; info: Extract
   const sea = t.match(/\b(calm|slight|moderate|rough|very rough)\s+(?:sea|seas|water)/i);
   obs.seaState = sea ? (sea[1].toLowerCase() as Observations["seaState"]) : null;
   obs.sailPlan = sailPlanFromText(t);
+  obs.fuelBurnLph = num(/(?:burn(?:ing)?|consumption|using)\s*(?:of\s*|about\s*)?(\d+(?:\.\d+)?)\s*(?:l|litres?|liters?)\s*(?:\/|per|an?)\s*(?:h|hr|hour)/i) ?? num(/(\d+(?:\.\d+)?)\s*(?:l|litres?|liters?)\s*(?:\/|per)\s*(?:h|hr|hour)/i);
+  obs.fuelLitres = num(/(\d+(?:\.\d+)?)\s*(?:l|litres?|liters?)\s*(?:of\s*)?(?:diesel|fuel)(?!\s*(?:\/|per))/i) ?? num(/(?:diesel|fuel)[^.\d]{0,20}?(\d+(?:\.\d+)?)\s*(?:l|litres?|liters?)\b(?!\s*(?:\/|per))/i);
   const crew = t.match(/crew\s+(?:is\s+|are\s+|feels?\s+|seems?\s+)?((?:very\s+|quite\s+|a bit\s+)?(?:tired|exhausted|rested|fine|ok|good|happy|seasick|sick|cold|wet|fresh|comfortable|sleepy|fatigued|well)[^.]*)/i);
   obs.crewCondition = crew ? crew[1].trim() : null;
   const found = Object.values(obs).filter((v) => v != null).length;

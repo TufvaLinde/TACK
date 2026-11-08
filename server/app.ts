@@ -171,9 +171,16 @@ export async function plan(opts: { refreshWeather?: boolean; recordDecision?: bo
     for (const k of Object.keys(obj.weights) as (keyof typeof obj.weights)[]) if (Number.isFinite(adj?.[k])) obj.weights[k] = Math.max(0, Math.min(1, adj[k])); // hard constraints are untouched
   } catch { /* strategy weighting failed — keep the captain's weights */ }
   const correction = getCorrection();
+  const lastObs = <K extends "fuelLitres" | "fuelBurnLph">(k: K) => [...liveEntries()].reverse().find((e) => e.observations?.[k] != null);
+  const fuelEntry = lastObs("fuelLitres"), burnEntry = lastObs("fuelBurnLph");
+  const fuel = {
+    startL: fuelEntry?.observations?.fuelLitres ?? null,
+    burnLph: burnEntry?.observations?.fuelBurnLph ?? null,
+    source: fuelEntry ? `logbook ${fuelEntry.timestamp.slice(0, 16)}Z` : "not reported",
+  };
   const routing = await time(
     "Generate candidate routes",
-    () => computeRoutes({ field, polar, correction, vessel, objectives: obj, departureMs: Date.now(), weatherFetchedAt: ws.meta?.fetchedAt ?? null, weatherStale: ws.stale, strategy: strategy.module, strategyVersion: strategy.meta.version }, pos, dest),
+    () => computeRoutes({ field, polar, correction, vessel, objectives: obj, departureMs: Date.now(), weatherFetchedAt: ws.meta?.fetchedAt ?? null, weatherStale: ws.stale, strategy: strategy.module, strategyVersion: strategy.meta.version, fuel }, pos, dest),
     (r) => `${r.routes.length} candidates, ${r.routes.filter((x) => x.eligible).length} satisfy hard constraints (strategy ${strategy.meta.version})`,
   );
   routingDoc.set(routing);
@@ -280,6 +287,7 @@ export function vesselState() {
       headingDeg: latestOf("headingDeg"), cogDeg: latestOf("cogDeg"), sogKn: latestOf("sogKn"), stwKn: latestOf("stwKn"),
       twsKn: latestOf("twsKn"), twdDeg: latestOf("twdDeg"), waveHeightM: latestOf("waveHeightM"), seaState: latestOf("seaState"),
       sailPlan: latestOf("sailPlan"), crewCondition: latestOf("crewCondition"),
+      fuelLitres: latestOf("fuelLitres"), fuelBurnLph: latestOf("fuelBurnLph"),
     },
     forecastHere: fc,
     eta: chosen ? { routeId: chosen.id, routeName: chosen.name, etaIso: chosen.metrics.etaIso, captainAccepted: lastDecision?.captainAction.action !== "pending" } : null,
