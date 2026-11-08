@@ -144,7 +144,16 @@ export async function runAgent(goal: string, brief: string): Promise<AgentRun> {
       { role: "user", content: `GOAL: ${goal}\n\nDAILY BRIEF (today's signals from TACK):\n${brief}` },
     ];
     for (let n = 1; n <= MAX_STEPS; n++) {
-      const { data } = await model.completeJson<{ thought: string; action: string; args: Record<string, any> }>(history, { name: "agent_action", schema: SCHEMA }, { maxTokens: 6000 });
+      let data: { thought: string; action: string; args: Record<string, any> } | null = null;
+      for (let tries = 0; tries < 3 && !data; tries++) {
+        const { text } = await model.complete(history, { json: { name: "agent_action", schema: SCHEMA }, maxTokens: 12000 });
+        try {
+          data = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+        } catch {
+          history.push({ role: "user", content: "Your last reply was not valid JSON. Reply with exactly one JSON action object." });
+        }
+      }
+      if (!data) throw new Error("model did not return a valid action after 3 tries");
       let result: string;
       if (data.action === "finish") {
         run.summary = data.args.summary ?? data.thought;
